@@ -1,4 +1,4 @@
-import { adminDb } from "@/lib/firebase/admin";
+import { getAdminDb } from "@/lib/firebase/admin";
 import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
@@ -20,11 +20,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     const ctx = await requireTenantScope(tenantId, userId, role || "owner");
+    const provider = mode === "meta" ? "meta_whatsapp" : "qr_provider";
 
-    const provider =
-      mode === "meta" ? "meta_whatsapp" : "qr_provider";
-
-    const existing = await adminDb
+    const existing = await getAdminDb()
       .collection(`tenants/${ctx.tenantId}/apiKeys`)
       .where("provider", "==", provider)
       .limit(1)
@@ -72,12 +70,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const ctx = await requireTenantScope(tenantId, userId, role);
 
-    const snap = await tenantDoc(
-      ctx.tenantId,
-      "settings",
-      "whatsapp"
-    ).get();
-
+    const snap = await tenantDoc(ctx.tenantId, "settings", "whatsapp").get();
     const data = snap.exists ? snap.data() : null;
 
     return createApiResponse({

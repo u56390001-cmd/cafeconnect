@@ -1,4 +1,4 @@
-import { adminDb } from "@/lib/firebase/admin";
+import { getAdminDb } from "@/lib/firebase/admin";
 import { getGeminiClient } from "@/lib/ai/gemini-client";
 import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { createApiError, createApiResponse } from "@/lib/api/response";
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     const ctx = await requireTenantScope(tenantId, userId, role || "readOnly");
 
-    const keySnap = await adminDb
+    const keySnap = await getAdminDb()
       .collection(`tenants/${ctx.tenantId}/apiKeys`)
       .where("provider", "==", "gemini")
       .where("status", "==", "active")
@@ -28,7 +28,6 @@ export async function POST(request: NextRequest): Promise<Response> {
       return createApiError("Gemini API key not configured", 403);
     }
 
-    const keyData = keySnap.docs[0].data();
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {

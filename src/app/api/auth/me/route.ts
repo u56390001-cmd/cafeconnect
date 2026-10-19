@@ -1,4 +1,4 @@
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
 import { createApiResponse, createApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
@@ -13,9 +13,9 @@ export async function GET(request: NextRequest): Promise<Response> {
       return createApiError("Missing uid", 400);
     }
 
-    const userRecord = await adminAuth.getUser(uid);
+    const userRecord = await getAdminAuth().getUser(uid);
 
-    const membershipSnap = await adminDb
+    const membershipSnap = await getAdminDb()
       .collectionGroup("members")
       .where("userId", "==", uid)
       .where("status", "==", "active")

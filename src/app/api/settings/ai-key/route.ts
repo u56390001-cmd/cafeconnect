@@ -1,4 +1,4 @@
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { getAdminDb } from "@/lib/firebase/admin";
 import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { encrypt, maskHint } from "@/lib/security/encryption";
 import { createApiResponse, createApiError } from "@/lib/api/response";
@@ -24,7 +24,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     const encrypted = await encrypt(keyValue, encryptionKey, 1);
     const masked = maskHint(keyValue);
 
-    const keyRef = tenantDoc(ctx.tenantId, "apiKeys", "key-" + Date.now().toString(36));
+    const keyRef = tenantDoc(
+      ctx.tenantId,
+      "apiKeys",
+      "key-" + Date.now().toString(36)
+    );
     await keyRef.set({
       keyId: keyRef.id,
       tenantId: ctx.tenantId,
@@ -66,7 +70,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const ctx = await requireTenantScope(tenantId, userId, role);
 
-    const snap = await adminDb
+    const snap = await getAdminDb()
       .collection(`tenants/${ctx.tenantId}/apiKeys`)
       .where("status", "==", "active")
       .get();

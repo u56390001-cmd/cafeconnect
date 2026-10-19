@@ -1,4 +1,4 @@
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
 import { requireTenantScope, tenantCollection } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";

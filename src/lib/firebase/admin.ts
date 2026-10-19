@@ -14,31 +14,49 @@ const requiredEnv = [
   "FIREBASE_PRIVATE_KEY",
 ];
 
-const missing = requiredEnv.filter((key) => !process.env[key]);
-
-if (missing.length > 0) {
-  throw new Error(
-    `Missing required Firebase Admin environment variables: ${missing.join(", ")}`
-  );
+function assertAdminEnv(): void {
+  const missing = requiredEnv.filter((key) => !process.env[key]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required Firebase Admin environment variables: ${missing.join(", ")}`
+    );
+  }
 }
 
-let adminApp: App;
-let adminDb: Firestore;
-let adminAuth: Auth;
+let adminApp: App | null = null;
+let adminDb: Firestore | null = null;
+let adminAuth: Auth | null = null;
 
-if (!getApps().length) {
-  adminApp = initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    }),
-  });
-} else {
-  adminApp = getApp();
+function getAdminApp(): App {
+  if (adminApp) return adminApp;
+
+  assertAdminEnv();
+
+  if (!getApps().length) {
+    adminApp = initializeApp({
+      credential: cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+      }),
+    });
+  } else {
+    adminApp = getApp();
+  }
+
+  return adminApp;
 }
 
-adminDb = getFirestore(adminApp);
-adminAuth = getAuth(adminApp);
+export function getAdminDb(): Firestore {
+  if (!adminDb) {
+    adminDb = getFirestore(getAdminApp());
+  }
+  return adminDb;
+}
 
-export { adminApp, adminDb, adminAuth };
+export function getAdminAuth(): Auth {
+  if (!adminAuth) {
+    adminAuth = getAuth(getAdminApp());
+  }
+  return adminAuth;
+}

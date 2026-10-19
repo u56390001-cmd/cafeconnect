@@ -1,4 +1,4 @@
-import { adminDb } from "@/lib/firebase/admin";
+import { getAdminDb } from "@/lib/firebase/admin";
 import {
   CollectionReference,
   DocumentReference,
@@ -19,7 +19,7 @@ export function tenantCollection(
   tenantId: string,
   subcollection: string
 ): CollectionReference {
-  return adminDb.collection(tenantPath(tenantId, subcollection));
+  return getAdminDb().collection(tenantPath(tenantId, subcollection));
 }
 
 export function tenantDoc(
@@ -27,7 +27,7 @@ export function tenantDoc(
   subcollection: string,
   docId: string
 ): DocumentReference {
-  return adminDb
+  return getAdminDb()
     .collection(tenantPath(tenantId, subcollection))
     .doc(docId);
 }
@@ -41,7 +41,7 @@ export async function requireTenantScope(
     throw new Error("Unauthorized: missing tenant or user identity");
   }
 
-  const membershipRef = adminDb
+  const membershipRef = getAdminDb()
     .collection(`tenants/${tenantId}/members`)
     .doc(userId);
   const membershipSnap = await membershipRef.get();
