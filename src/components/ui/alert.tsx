@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { AlertPrimitive } from "@radix-ui/react-alert";
 import { cn } from "@/lib/utils";
 
 const Alert = React.forwardRef<
@@ -28,8 +27,8 @@ const Alert = React.forwardRef<
       {...props}
     />
   );
-});
-Alert.displayName = "AlertPrimitive.Root.displayName";
+  });
+Alert.displayName = "Alert";
 
 const AlertTitle = React.forwardRef<
   HTMLHeadingElement,
