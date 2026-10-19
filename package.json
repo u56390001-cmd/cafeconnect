@@ -13,7 +13,20 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "firebase": "^10.12.2",
-    "@google/generative-ai": "^0.15.0"
+    "@google/generative-ai": "^0.15.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.2",
+    "class-variance-authority": "^0.7.0",
+    "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-toggle-group": "^1.1.0",
+    "@radix-ui/react-checkbox": "^1.1.0",
+    "@radix-ui/react-switch": "^1.1.0",
+    "@radix-ui/react-select": "^2.1.0",
+    "@radix-ui/react-dialog": "^1.1.0",
+    "@radix-ui/react-alert": "^1.1.0",
+    "@radix-ui/react-radio-group": "^1.2.0",
+    "lucide-react": "^0.446.0",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
