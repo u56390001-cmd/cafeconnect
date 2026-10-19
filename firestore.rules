@@ -1,0 +1,158 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Deny by default for all documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------- Users (global identity) ----------
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    // ---------- Tenants ----------
+    match /tenants/{tenantId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && resource.data.ownerUserId == request.auth.uid;
+    }
+
+    // ---------- Tenant memberships ----------
+    match /tenants/{tenantId}/members/{userId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && get(/databases/$(database)/documents/tenants/$(tenantId)).data.ownerUserId == request.auth.uid;
+    }
+
+    // ---------- Packages ----------
+    match /tenants/{tenantId}/packages/{packageId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && request.auth.token.role == "owner"
+        || request.auth.token.role == "admin";
+    }
+
+    // ---------- Knowledge Base ----------
+    match /tenants/{tenantId}/knowledgeBase/{docId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && (request.auth.token.role == "owner"
+          || request.auth.token.role == "admin"
+          || request.auth.token.role == "knowledgeEditor");
+    }
+
+    match /tenants/{tenantId}/knowledgeChunks/{chunkId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if false;
+    }
+
+    // ---------- Conversations ----------
+    match /tenants/{tenantId}/conversations/{conversationId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+    }
+
+    match /tenants/{tenantId}/conversations/{conversationId}/messages/{messageId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+    }
+
+    // ---------- ApiKeys (admin/server-only) ----------
+    // Client access is fully denied. Server-side Admin SDK must authorize independently.
+    match /tenants/{tenantId}/apiKeys/{keyId} {
+      allow read, write: if false;
+    }
+
+    // ---------- Public widget settings (read-only, public fields only) ----------
+    match /tenants/{tenantId}/settings/publicWidget/{widgetId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ---------- Menu / Offers / Orders / Bookings ----------
+    match /tenants/{tenantId}/menuCategories/{categoryId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && (request.auth.token.role == "owner"
+          || request.auth.token.role == "admin"
+          || request.auth.token.role == "manager");
+    }
+
+    match /tenants/{tenantId}/menuItems/{itemId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && (request.auth.token.role == "owner"
+          || request.auth.token.role == "admin"
+          || request.auth.token.role == "manager");
+    }
+
+    match /tenants/{tenantId}/offers/{offerId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && (request.auth.token.role == "owner"
+          || request.auth.token.role == "admin"
+          || request.auth.token.role == "manager");
+    }
+
+    match /tenants/{tenantId}/orders/{orderId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && (request.auth.token.role == "owner"
+          || request.auth.token.role == "admin"
+          || request.auth.token.role == "manager"
+          || request.auth.token.role == "orderStaff");
+    }
+
+    match /tenants/{tenantId}/bookings/{bookingId} {
+      allow read: if request.auth != null
+        && request.auth.token.tenantId == tenantId;
+      allow write: if request.auth != null
+        && request.auth.token.tenantId == tenantId
+        && (request.auth.token.role == "owner"
+          || request.auth.token.role == "admin"
+          || request.auth.token.role == "manager");
+    }
+
+    // ---------- Integrations ----------
+    match /tenants/{tenantId}/integrations/{integrationId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // ---------- Platform (admin only) ----------
+    match /platform/{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------- Storage paths (placeholder, deny by default) ----------
+    match /storage/{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
