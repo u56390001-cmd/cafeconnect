@@ -1,5 +1,9 @@
 import { adminDb } from "@/lib/firebase/admin";
-import { CollectionReference, DocumentReference, Query } from "firebase-admin/firestore";
+import {
+  CollectionReference,
+  DocumentReference,
+  Query,
+} from "firebase-admin/firestore";
 
 export interface TenantContext {
   tenantId: string;
@@ -11,13 +15,21 @@ export function tenantPath(tenantId: string, subcollection: string): string {
   return `tenants/${tenantId}/${subcollection}`;
 }
 
-export function tenantRef(
+export function tenantCollection(
+  tenantId: string,
+  subcollection: string
+): CollectionReference {
+  return adminDb.collection(tenantPath(tenantId, subcollection));
+}
+
+export function tenantDoc(
   tenantId: string,
   subcollection: string,
-  docId?: string
-): DocumentReference | CollectionReference {
-  const ref = adminDb.collection(tenantPath(tenantId, subcollection));
-  return docId ? ref.doc(docId) : ref;
+  docId: string
+): DocumentReference {
+  return adminDb
+    .collection(tenantPath(tenantId, subcollection))
+    .doc(docId);
 }
 
 export async function requireTenantScope(

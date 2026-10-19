@@ -1,7 +1,7 @@
-import { adminDb } from "@/lib/firebase/admin";
-import { requireTenantScope, tenantRef } from "@/lib/tenancy/resolver";
+import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { encrypt, maskHint } from "@/lib/security/encryption";
-import { createApiError, createApiResponse } from "@/lib/api/response";
+import { createApiResponse, createApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +22,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     const encrypted = await encrypt(keyValue, encryptionKey, 1);
+    const masked = maskHint(keyValue);
 
-    const keyRef = tenantRef(ctx.tenantId, "apiKeys").doc();
+    const keyRef = tenantDoc(ctx.tenantId, "apiKeys", "key-" + Date.now().toString(36));
     await keyRef.set({
       keyId: keyRef.id,
       tenantId: ctx.tenantId,
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       nonceOrIv: encrypted.nonceOrIv,
       authTag: encrypted.authTag,
       keyVersion: encrypted.keyVersion,
-      maskedHint: maskHint(keyValue),
+      maskedHint: masked,
       status: "pending_validation",
       lastValidatedAt: null,
       createdBy: ctx.userId,
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     return createApiResponse({
       keyId: keyRef.id,
-      maskedHint: encrypted.maskedHint,
+      maskedHint: masked,
       status: "pending_validation",
     });
   } catch (error: unknown) {
@@ -65,7 +66,8 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const ctx = await requireTenantScope(tenantId, userId, role);
 
-    const snap = await tenantRef(ctx.tenantId, "apiKeys")
+    const snap = await adminDb
+      .collection(`tenants/${ctx.tenantId}/apiKeys`)
       .where("status", "==", "active")
       .get();
 

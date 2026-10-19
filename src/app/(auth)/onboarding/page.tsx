@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Select, SelectTrigger, SelectContent, SelectValue, SelectItem } from "@/components/ui/select";
@@ -35,7 +35,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (!user) {
-      router.push("/auth/signup");
+      router.push("/signup");
     }
   }, [user, router]);
 
@@ -136,7 +136,9 @@ export default function OnboardingPage() {
             <Field>
               <FieldLabel htmlFor="businessType">Business Type</FieldLabel>
               <Select
-                onValueChange={(value) => setForm({ ...form, businessType: value })}
+                onValueChange={(value: string) =>
+                  setForm({ ...form, businessType: value })
+                }
                 defaultValue={form.businessType}
               >
                 <SelectTrigger id="businessType">

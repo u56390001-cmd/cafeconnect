@@ -1,5 +1,5 @@
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
-import { requireTenantScope, tenantRef } from "@/lib/tenancy/resolver";
+import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
@@ -14,14 +14,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       return createApiError("Missing required fields", 400);
     }
 
-    const ctx = await requireTenantScope(
-      tenantId,
-      userId,
-      role || "owner"
-    );
+    const ctx = await requireTenantScope(tenantId, userId, role || "owner");
 
-    // Update tenant profile
-    await tenantRef(ctx.tenantId, "profile").doc("main").set(
+    await tenantDoc(ctx.tenantId, "profile", "main").set(
       {
         businessName,
         businessType: [businessType || "restaurant"],

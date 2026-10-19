@@ -9,8 +9,11 @@ const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 const SALT_LENGTH = 16;
 
-function getEncryptionKey(password: string, salt: Buffer): Promise<Buffer> {
-  return scryptAsync(password, salt, KEY_LENGTH);
+function getEncryptionKey(
+  password: string,
+  salt: Buffer
+): Promise<Buffer> {
+  return scryptAsync(password, salt, KEY_LENGTH) as Promise<Buffer>;
 }
 
 export interface EncryptedPayload {

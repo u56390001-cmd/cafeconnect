@@ -12,25 +12,14 @@ const firebaseConfig = {
 };
 
 let app: FirebaseApp;
-let firestore: Firestore;
-let auth: Auth;
 
-if (typeof window === "undefined") {
-  if (!getApps().length) {
-    app = initializeApp(firebaseConfig);
-  } else {
-    app = getApps()[0];
-  }
-  firestore = getFirestore(app);
-  auth = getAuth(app);
+if (!getApps().length) {
+  app = initializeApp(firebaseConfig);
 } else {
-  if (!getApps().length) {
-    app = initializeApp(firebaseConfig);
-  } else {
-    app = getApps()[0];
-  }
-  firestore = getFirestore(app);
-  auth = getAuth(app);
+  app = getApps()[0];
 }
+
+const firestore: Firestore = getFirestore(app);
+const auth: Auth = getAuth(app);
 
 export { app, firestore, auth };

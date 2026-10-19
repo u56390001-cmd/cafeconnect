@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ToggleGroupPrimitive } from "@radix-ui/react-toggle-group";
+import * as ToggleGroupPrimitive from "@radix-ui/react-toggle-group";
 import { cn } from "@/lib/utils";
 
 const ToggleGroup = React.forwardRef<

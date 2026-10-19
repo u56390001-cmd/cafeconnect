@@ -5,12 +5,17 @@ import { cn } from "@/lib/utils";
 
 const Separator = React.forwardRef<
   HTMLHRElement,
-  React.HTMLAttributes<HTMLHRElement>
->(({ className, ...props }, ref) => (
+  React.HTMLAttributes<HTMLHRElement> & {
+    orientation?: "horizontal" | "vertical";
+  }
+>(({ className, orientation = "horizontal", ...props }, ref) => (
   <hr
     ref={ref}
+    role="separator"
+    aria-orientation={orientation}
     className={cn(
-      "mx-auto border-border h-[1px] w-full bg-border",
+      "shrink-0 bg-border",
+      orientation === "horizontal" ? "h-px w-full" : "h-full w-px",
       className
     )}
     {...props}

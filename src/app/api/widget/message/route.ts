@@ -1,6 +1,6 @@
 import { adminDb } from "@/lib/firebase/admin";
 import { getGeminiClient } from "@/lib/ai/gemini-client";
-import { requireTenantScope, tenantRef } from "@/lib/tenancy/resolver";
+import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { createApiError, createApiResponse } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
@@ -17,35 +17,35 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     const ctx = await requireTenantScope(tenantId, userId, role || "readOnly");
 
-    // Fetch tenant's active Gemini API key (server-side only)
-    const apiKeysRef = tenantRef(ctx.tenantId, "apiKeys");
-    const geminiKeySnap = await apiKeysRef
+    const keySnap = await adminDb
+      .collection(`tenants/${ctx.tenantId}/apiKeys`)
       .where("provider", "==", "gemini")
       .where("status", "==", "active")
       .limit(1)
       .get();
 
-    if (geminiKeySnap.empty) {
+    if (keySnap.empty) {
       return createApiError("Gemini API key not configured", 403);
     }
 
-    const keyDoc = geminiKeySnap.docs[0];
-    const keyData = keyDoc.data();
+    const keyData = keySnap.docs[0].data();
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    // Note: Decryption requires SECRET_ENCRYPTION_KEY from env
-    // For now, validate key exists; full decrypt flow wired in settings step
+    if (!apiKey) {
+      return createApiError("Gemini API key not configured on server", 403);
+    }
 
-    const genAI = getGeminiClient(keyData.maskedHint || "");
+    const genAI = getGeminiClient(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const result = await model.generateContent(message);
     const text = result.response.text();
 
-    // Persist message (server-side, tenant-scoped)
-    const msgRef = tenantRef(
+    const msgRef = tenantDoc(
       ctx.tenantId,
-      `conversations/${conversationId}/messages`
-    ).doc();
+      `conversations/${conversationId}/messages`,
+      "msg-" + Date.now().toString(36)
+    );
     await msgRef.set({
       messageId: msgRef.id,
       tenantId: ctx.tenantId,
@@ -54,6 +54,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       senderType: "assistant",
       content: text,
       processingStatus: "processed",
+      deliveryStatus: "sent",
+      sourceReferences: [],
+      toolActionReferences: [],
       createdAt: new Date(),
     });
 

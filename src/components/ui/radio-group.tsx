@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { RadioGroupPrimitive } from "@radix-ui/react-radio-group";
+import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 import { cn } from "@/lib/utils";
 
 const RadioGroup = React.forwardRef<
@@ -18,9 +18,7 @@ RadioGroup.displayName = RadioGroupPrimitive.Root.displayName;
 
 const RadioGroupItem = React.forwardRef<
   React.ElementRef<typeof RadioGroupPrimitive.Item>,
-  RadioGroupPrimitive.ItemProps & {
-    className?: string;
-  }
+  React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item>
 >(({ className, ...props }, ref) => (
   <RadioGroupPrimitive.Item
     ref={ref}

@@ -1,15 +1,33 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
+
+type KnowledgeCategory = "faq" | "policy" | "businessInfo" | "document";
+
+interface KnowledgeItem {
+  documentId: string;
+  title: string;
+  category: KnowledgeCategory;
+  language: string;
+  status: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface KnowledgeListResponse {
+  success: boolean;
+  data: { items: KnowledgeItem[] };
+}
 
 export default function KnowledgePage() {
   const { user } = useAuth();
-  const [items, setItems] = useState<Array<any>>([]);
+  const [items, setItems] = useState<KnowledgeItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("businessInfo");
+  const [category, setCategory] = useState<KnowledgeCategory>("businessInfo");
   const [content, setContent] = useState("");
   const [language, setLanguage] = useState("en");
 
@@ -26,10 +44,9 @@ export default function KnowledgePage() {
       const res = await fetch(
         `/api/knowledge?tenantId=${user.tenantId}&userId=${user.uid}&role=${user.role || "owner"}`
       );
-      if (res.ok) {
-        const data = await res.json();
-        setItems(data.items || []);
-      }
+      if (!res.ok) return;
+      const payload = (await res.json()) as KnowledgeListResponse;
+      setItems(payload.data?.items ?? []);
     } catch {
       setError("Failed to load knowledge base");
     } finally {
@@ -57,7 +74,7 @@ export default function KnowledgePage() {
           userId: user.uid,
           role: user.role || "owner",
           title,
-          category: category as any,
+          category,
           content,
           language,
         }),
@@ -132,7 +149,9 @@ export default function KnowledgePage() {
                 </label>
                 <select
                   value={category}
-                  onChange={(e) => setCategory(e.target.value as any)}
+                  onChange={(e) =>
+                    setCategory(e.target.value as KnowledgeCategory)
+                  }
                   className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
                 >
                   {categories.map((c) => (

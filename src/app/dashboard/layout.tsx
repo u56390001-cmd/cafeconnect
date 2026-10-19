@@ -1,17 +1,28 @@
 "use client";
 
-import { useAuth } from "@/context/AuthContext";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  BookOpen,
+  LayoutDashboard,
+  LogOut,
+  MessageSquare,
+  Package,
+  Settings,
+  Store,
+} from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 const navItems = [
-  { name: "Dashboard", href: "/dashboard", icon: "🏠" },
-  { name: "Knowledge Base", href: "/dashboard/knowledge", icon: "📚" },
-  { name: "Packages", href: "/dashboard/packages", icon: "📦" },
-  { name: "Settings", href: "/dashboard/settings", icon: "⚙️" },
-  { name: "Chat Logs", href: "/dashboard/chats", icon: "💬" },
+  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { name: "Knowledge Base", href: "/dashboard/knowledge", icon: BookOpen },
+  { name: "Packages", href: "/dashboard/packages", icon: Package },
+  { name: "Settings", href: "/dashboard/settings", icon: Settings },
+  { name: "Chat Logs", href: "/dashboard/chats", icon: MessageSquare },
 ];
 
 export default function DashboardLayout({
@@ -22,68 +33,98 @@ export default function DashboardLayout({
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
+  const [activePath, setActivePath] = useState<string>("");
 
   useEffect(() => {
     setMounted(true);
+    setActivePath(window.location.pathname);
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => setActivePath(window.location.pathname);
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   if (!mounted || loading) {
-    return null;
+    return (
+      <div className="flex min-h-screen flex-col gap-4 p-6">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
   }
 
   if (!user) {
-    router.push("/auth/signup");
+    router.push("/signup");
     return null;
   }
 
+  const handleSignOut = async () => {
+    await signOut();
+    router.push("/signup");
+  };
+
   return (
     <div className="min-h-screen bg-background">
-      <nav className="border-b border-border bg-background">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <span className="text-xl font-bold text-primary">CafeConnect</span>
-              <span className="text-sm font-medium text-muted-foreground ml-2">
-                {user?.tenantId ? `Tenant: ${user.tenantId}` : ""}
+      <header className="border-b border-border bg-background">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3">
+            <span className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Store className="size-5" aria-hidden="true" />
+            </span>
+            <span className="text-lg font-semibold text-foreground">
+              CafeConnect
+            </span>
+            {user.tenantId && (
+              <Separator orientation="vertical" className="mx-2 h-6" />
+            )}
+            {user.tenantId && (
+              <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
+                {user.tenantId}
               </span>
-            </div>
-            <div className="flex items-center gap-4">
-              <span className="hidden sm:block text-sm text-muted-foreground">
-                {user?.email}
-              </span>
-              <button
-                onClick={() => {
-                  signOut();
-                  router.push("/auth/signup");
-                }}
-                className="text-sm text-destructive hover:text-destructive/90"
-              >
-                Sign out
-              </button>
-            </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-muted-foreground sm:inline">
+              {user.email}
+            </span>
+            <Button variant="ghost" size="sm" onClick={handleSignOut}>
+              <LogOut data-icon="inline-start" />
+              Sign out
+            </Button>
           </div>
         </div>
-      </nav>
+      </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <aside className="hidden md:flex w-64 flex-col gap-1">
-          <nav className="space-y-1">
-            {navItems.map((item) => (
-              <Button
-                key={item.name}
-                asChild
-                variant="ghost"
-                className="w-full justify-start text-left gap-3 px-4 py-2 text-sm font-medium hover:bg-accent"
-              >
-                <a href={item.href}>{item.icon} {item.name}</a>
-              </Button>
-            ))}
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 md:flex-row lg:px-8">
+        <aside className="w-full shrink-0 md:w-56">
+          <nav aria-label="Dashboard" className="flex flex-col gap-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activePath === item.href;
+              return (
+                <Button
+                  key={item.name}
+                  asChild
+                  variant={isActive ? "secondary" : "ghost"}
+                  className={cn(
+                    "w-full justify-start gap-3 px-3",
+                    isActive && "font-medium"
+                  )}
+                >
+                  <a href={item.href}>
+                    <Icon data-icon="inline-start" />
+                    {item.name}
+                  </a>
+                </Button>
+              );
+            })}
           </nav>
         </aside>
 
-        <div className="md:ml-64">
-          <main>{children}</main>
-        </div>
+        <main className="min-w-0 flex-1">{children}</main>
       </div>
     </div>
   );

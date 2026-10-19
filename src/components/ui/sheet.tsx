@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { SheetPrimitive } from "@radix-ui/react-dialog";
+import * as SheetPrimitive from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 
 const Sheet = SheetPrimitive.Root;
@@ -25,7 +25,7 @@ SheetOverlay.displayName = SheetPrimitive.Overlay.displayName;
 
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof SheetPrimitive.Content>,
-  SheetPrimitive.ContentProps & { className?: string }
+  React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
   <SheetPortal>
     <SheetOverlay />

@@ -1,5 +1,5 @@
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
-import { requireTenantScope, tenantRef } from "@/lib/tenancy/resolver";
+import { requireTenantScope, tenantCollection } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const ctx = await requireTenantScope(tenantId, userId, role);
 
-    const snap = await tenantRef(ctx.tenantId, "knowledgeBase")
+    const snap = await tenantCollection(ctx.tenantId, "knowledgeBase")
       .where("status", "==", "published")
       .get();
 
@@ -65,14 +65,13 @@ export async function POST(request: NextRequest): Promise<Response> {
       role || "readOnly"
     );
 
-    const docRef = tenantRef(ctx.tenantId, "knowledgeBase").doc();
+    const docRef = tenantCollection(ctx.tenantId, "knowledgeBase").doc();
     await docRef.set({
       documentId: docRef.id,
       tenantId: ctx.tenantId,
       title,
       contentReference: content || "",
-      category:
-        category || "businessInfo",
+      category: category || "businessInfo",
       language: language || "en",
       branchId: null,
       sourceType: "manual",

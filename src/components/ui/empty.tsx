@@ -17,7 +17,7 @@ Empty.displayName = "Empty";
 
 const EmptyMedia = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
+  React.HTMLAttributes<HTMLDivElement> & { variant?: "icon" | "text" }
 >(({ className, variant = "icon", ...props }, ref) => {
   const baseStyles =
     "mb-2 h-12 w-12 flex shrink-0 items-center justify-center rounded-full bg-accent";
@@ -68,4 +68,23 @@ const EmptyContent = React.forwardRef<
 ));
 EmptyContent.displayName = "EmptyContent";
 
-export { Empty, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent };
+const EmptyHeader = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("flex max-w-sm flex-col items-center gap-2 text-center", className)}
+    {...props}
+  />
+));
+EmptyHeader.displayName = "EmptyHeader";
+
+export {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+};

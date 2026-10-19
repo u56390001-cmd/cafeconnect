@@ -1,59 +1,101 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Separator } from "@/components/ui/separator";
+import { ApiKeyCard, SecurityNotice, type KeyStatus } from "@/components/settings/ApiKeyCard";
+import {
+  WhatsappModeCard,
+  type WhatsappMode,
+  type WhatsappStatus,
+} from "@/components/settings/WhatsappModeCard";
+
+interface ApiKeySummary {
+  keyId: string;
+  provider: "gemini" | "meta_whatsapp" | "qr_provider";
+  maskedHint: string;
+  status: string;
+  keyVersion: number;
+  lastValidatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ApiKeyListResponse {
+  success: boolean;
+  data: { keys: ApiKeySummary[] };
+}
+
+interface WhatsappSettingsResponse {
+  success: boolean;
+  data: {
+    mode: WhatsappMode | null;
+    provider: string | null;
+    status: WhatsappStatus;
+  };
+}
 
 export default function SettingsPage() {
   const { user } = useAuth();
   const [tenantId, setTenantId] = useState<string | null>(null);
-  const [geminiKey, setGeminiKey] = useState("");
-  const [whatsappMode, setWhatsappMode] = useState<"meta" | "qr_trial">("meta");
-  const [geminiStatus, setGeminiStatus] = useState<"not_configured" | "pending_validation" | "connected" | "error">("not_configured");
-  const [whatsappStatus, setWhatsappStatus] = useState<"not_configured" | "pending_validation" | "connected" | "disconnected" | "error">("not_configured");
+  const [geminiStatus, setGeminiStatus] = useState<KeyStatus>("not_configured");
+  const [whatsappStatus, setWhatsappStatus] =
+    useState<WhatsappStatus>("not_configured");
+  const [whatsappMode, setWhatsappMode] = useState<WhatsappMode>("meta");
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [message, setMessage] = useState<{
+    text: string;
+    type: "success" | "error";
+  } | null>(null);
 
   useEffect(() => {
     if (user?.tenantId) {
       setTenantId(user.tenantId);
-      loadSettings();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    void loadSettings();
+  }, [tenantId]);
 
   const loadSettings = async () => {
     if (!tenantId) return;
     try {
-      const res = await fetch(`/api/settings/ai-key?tenantId=${tenantId}&userId=${user?.uid}&role=owner`);
-      if (res.ok) {
-        const data = await res.json();
-        const keys = data.keys || [];
-        const geminiKey = keys.find((k: any) => k.provider === "gemini");
-        if (geminiKey) {
-          setGeminiStatus(geminiKey.status as any);
+      const [keysRes, waRes] = await Promise.all([
+        fetch(
+          `/api/settings/ai-key?tenantId=${tenantId}&userId=${user?.uid}&role=owner`
+        ),
+        fetch(
+          `/api/settings/whatsapp?tenantId=${tenantId}&userId=${user?.uid}&role=owner`
+        ),
+      ]);
+
+      if (keysRes.ok) {
+        const payload = (await keysRes.json()) as ApiKeyListResponse;
+        const keys = payload.data?.keys ?? [];
+        const gemini = keys.find((k) => k.provider === "gemini");
+        if (gemini) {
+          setGeminiStatus(
+            gemini.status === "active" ? "connected" : "pending_validation"
+          );
         }
       }
+
+      if (waRes.ok) {
+        const payload = (await waRes.json()) as WhatsappSettingsResponse;
+        if (payload.data?.mode) {
+          setWhatsappMode(payload.data.mode);
+        }
+        setWhatsappStatus(payload.data?.status ?? "not_configured");
+      }
     } catch {
-      // Silent fail
+      setGeminiStatus("error");
     }
   };
 
-  const handleSaveGeminiKey = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveKey = async (provider: string, keyValue: string) => {
     if (!tenantId || !user) return;
-    if (!geminiKey.trim()) {
-      setMessage({ text: "API key is required", type: "error" });
-      return;
-    }
-
     setLoading(true);
     setMessage(null);
 
@@ -65,8 +107,8 @@ export default function SettingsPage() {
           tenantId,
           userId: user.uid,
           role: user.role || "owner",
-          provider: "gemini",
-          keyValue: geminiKey,
+          provider,
+          keyValue,
         }),
       });
 
@@ -75,44 +117,16 @@ export default function SettingsPage() {
         throw new Error(err.error?.message || "Failed to save key");
       }
 
-      setGeminiStatus("pending_validation");
-      setMessage({ text: "Gemini API key saved successfully (encrypted)", type: "success" });
-      setGeminiKey("");
-    } catch (err: unknown) {
-      setMessage({ text: err instanceof Error ? err.message : "Failed to save key", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleModeChange = async (mode: "meta" | "qr_trial") => {
-    if (!tenantId || !user) return;
-    setWhatsappMode(mode);
-    setLoading(true);
-
-    try {
-      const res = await fetch("/api/settings/ai-key", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tenantId,
-          userId: user.uid,
-          role: user.role || "owner",
-          provider: mode === "meta" ? "meta_whatsapp" : "qr_provider",
-          keyValue: "",
-        }),
-      });
-
-      if (res.ok) {
-        setWhatsappStatus("pending_validation");
-        setMessage({
-          text: `WhatsApp ${mode === "meta" ? "Meta Cloud API" : "7-Day QR Trial"} configured`,
-          type: "success",
-        });
+      if (provider === "gemini") {
+        setGeminiStatus("pending_validation");
       }
+      setMessage({
+        text: "Key saved. It is encrypted at rest and never returned to the browser.",
+        type: "success",
+      });
     } catch (err: unknown) {
       setMessage({
-        text: err instanceof Error ? err.message : "Failed to update WhatsApp mode",
+        text: err instanceof Error ? err.message : "Failed to save key",
         type: "error",
       });
     } finally {
@@ -120,145 +134,119 @@ export default function SettingsPage() {
     }
   };
 
-  const maskKey = (key: string) => {
-    if (!key || key.length < 8) return "••••••••";
-    return `••••••${key.slice(-4)}`;
-  };
+  const saveWhatsappMode = async () => {
+    if (!tenantId || !user) return;
+    setLoading(true);
+    setMessage(null);
 
-  const statusVariant = (status: string) => {
-    switch (status) {
-      case "connected": return "success";
-      case "pending_validation": return "default";
-      case "error":
-      case "disconnected": return "destructive";
-      default: return "secondary";
+    try {
+      const res = await fetch("/api/settings/whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          userId: user.uid,
+          role: user.role || "owner",
+          mode: whatsappMode,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || "Failed to update WhatsApp mode");
+      }
+
+      const payload = (await res.json()) as WhatsappSettingsResponse;
+      setWhatsappStatus(payload.data?.status ?? "pending_validation");
+      setMessage({
+        text: `WhatsApp mode set to ${
+          whatsappMode === "meta" ? "Meta Cloud API" : "7-Day QR Trial"
+        }.`,
+        type: "success",
+      });
+    } catch (err: unknown) {
+      setMessage({
+        text:
+          err instanceof Error ? err.message : "Failed to update WhatsApp mode",
+        type: "error",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
-  if (!tenantId) return <div className="p-4">Loading settings...</div>;
+  if (!tenantId) {
+    return <div className="p-6 text-muted-foreground">Loading settings...</div>;
+  }
 
   return (
     <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Tenant Settings</h1>
-          <p className="text-muted-foreground">
-            Manage API keys and channel integrations for tenant:{" "}
-            <span className="font-mono text-sm">{tenantId}</span>
-          </p>
-        </div>
-      </div>
+      <header className="mb-6">
+        <h1 className="text-2xl font-bold text-foreground">Tenant Settings</h1>
+        <p className="text-muted-foreground">
+          Manage API keys and channel integrations for tenant{" "}
+          <span className="font-mono text-sm">{tenantId}</span>
+        </p>
+      </header>
 
       {message && (
-        <Alert variant={message.type === "success" ? "success" : "destructive"}>
-          <AlertTitle>
-            {message.type === "success" ? "Success" : "Error"}
-          </AlertTitle>
-          <AlertDescription>{message.text}</AlertDescription>
-        </Alert>
+        <div className="mb-6 max-w-2xl">
+          <Alert variant={message.type === "success" ? "success" : "destructive"}>
+            <AlertTitle>
+              {message.type === "success" ? "Success" : "Error"}
+            </AlertTitle>
+            <AlertDescription>{message.text}</AlertDescription>
+          </Alert>
+        </div>
       )}
 
-      <div className="grid gap-6 max-w-2xl">
-        {/* Gemini AI Key Card */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-lg">Gemini AI Key</CardTitle>
-                <CardDescription className="text-sm text-muted-foreground">
-                  Server-side encryption. Key never exposed to browser.
-                </CardDescription>
-              </div>
-              <Badge variant={statusVariant(geminiStatus)}>
-                {geminiStatus.replace("_", " ")}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-4">
-            <form onSubmit={handleSaveGeminiKey} className="space-y-4">
-              <Field>
-                <FieldLabel htmlFor="geminiKey">API Key</FieldLabel>
-                <Input
-                  id="geminiKey"
-                  type="password"
-                  value={geminiKey}
-                  onChange={(e) => setGeminiKey(e.target.value)}
-                  placeholder="AIza..."
-                  disabled={loading}
-                />
-              </Field>
-              <Button type="submit" disabled={loading || !geminiKey.trim()} className="w-full">
-                {loading ? "Saving..." : "Save Encrypted Key"}
-              </Button>
-              <p className="text-xs text-muted-foreground mt-1">
-                Key is encrypted with AES-256-GCM before storage.
-              </p>
-            </form>
-          </CardContent>
-        </Card>
+      <div className="flex max-w-2xl flex-col gap-6">
+        <ApiKeyCard
+          title="Gemini AI Key"
+          description="Used by the shared AI engine for both chat channels."
+          provider="gemini"
+          status={geminiStatus}
+          placeholder="AIza..."
+          loading={loading}
+          footnote="Encrypted with AES-256-GCM before storage. The key is never sent back to the browser."
+          onSave={(value) => saveKey("gemini", value)}
+        />
 
-        {/* WhatsApp Mode Card */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-lg">WhatsApp Connection</CardTitle>
-                <CardDescription className="text-sm text-muted-foreground">
-                  Choose your WhatsApp provider mode
-                </CardDescription>
-              </div>
-              <Badge variant={statusVariant(whatsappStatus)}>
-                {whatsappStatus.replace("_", " ")}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-4">
-            <Field>
-              <FieldLabel>Provider Mode</FieldLabel>
-              <ToggleGroup
-                onValueChange={setWhatsappMode}
-                defaultValue={whatsappMode}
-              >
-                <ToggleGroupItem value="meta">
-                  📱 Meta Cloud API
-                </ToggleGroupItem>
-                <ToggleGroupItem value="qr_trial">
-                  🔒 7-Day QR Trial
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </Field>
+        <WhatsappModeCard
+          mode={whatsappMode}
+          status={whatsappStatus}
+          loading={loading}
+          onModeChange={setWhatsappMode}
+          onSave={saveWhatsappMode}
+        />
 
-            {whatsappMode === "qr_trial" && (
-              <Alert variant="default">
-                <AlertTitle>7-Day Trial</AlertTitle>
-                <AlertDescription>
-                  Trial expires server-side. Cannot be extended by browser
-                  clock changes.
-                </AlertDescription>
-              </Alert>
-            )}
+        <ApiKeyCard
+          title="WhatsApp Credential"
+          description={
+            whatsappMode === "meta"
+              ? "Meta WhatsApp Cloud API access token for this tenant."
+              : "QR trial provider session key for this tenant."
+          }
+          provider={whatsappMode === "meta" ? "meta_whatsapp" : "qr_provider"}
+          status={
+            whatsappStatus === "connected"
+              ? "connected"
+              : whatsappStatus === "not_configured"
+              ? "not_configured"
+              : "pending_validation"
+          }
+          placeholder={whatsappMode === "meta" ? "EAAG..." : "wa.0..."}
+          loading={loading}
+          footnote="Tenant-owned credential. Platform-owned trial credentials are never exposed here."
+          onSave={(value) =>
+            saveKey(
+              whatsappMode === "meta" ? "meta_whatsapp" : "qr_provider",
+              value
+            )
+          }
+        />
 
-            <Button onClick={() => handleModeChange(whatsappMode)} disabled={loading} className="w-full">
-              {loading ? "Configuring..." : "Save WhatsApp Mode"}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Security Info Card */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Security Notes</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2">
-            <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-              <li>All API keys are encrypted server-side before storage</li>
-              <li>Full keys are never returned to the browser</li>
-              <li>Only masked hints ({maskKey("sk-1234567890")}) are shown</li>
-              <li>Firebase Admin SDK authorizes all server-side access</li>
-              <li>Tenant ID is validated on every request</li>
-            </ul>
-          </CardContent>
-        </Card>
+        <SecurityNotice />
       </div>
     </div>
   );
