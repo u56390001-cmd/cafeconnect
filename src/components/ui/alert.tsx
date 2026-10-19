@@ -1,0 +1,58 @@
+"use client";
+
+import * as React from "react";
+import { AlertPrimitive } from "@radix-ui/react-alert";
+import { cn } from "@/lib/utils";
+
+const Alert = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement> & { variant?: "default" | "destructive" | "success" }
+>(({ className, variant = "default", ...props }, ref) => {
+  const variants = {
+    default: "bg-background text-foreground",
+    destructive:
+      "border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive",
+    success:
+      "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 border-emerald-200 [&>svg]:text-emerald-600",
+  };
+
+  return (
+    <div
+      ref={ref}
+      role="alert"
+      className={cn(
+        "relative w-full rounded-lg border p-4 [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-current [&>svg+div]:pl-7",
+        variants[variant],
+        className
+      )}
+      {...props}
+    />
+  );
+});
+Alert.displayName = "AlertPrimitive.Root.displayName";
+
+const AlertTitle = React.forwardRef<
+  HTMLHeadingElement,
+  React.HTMLAttributes<HTMLHeadingElement>
+>(({ className, ...props }, ref) => (
+  <h2
+    ref={ref}
+    className={cn("mb-1 font-medium leading-none tracking-tight", className)}
+    {...props}
+  />
+));
+AlertTitle.displayName = "AlertTitle";
+
+const AlertDescription = React.forwardRef<
+  HTMLParagraphElement,
+  React.HTMLAttributes<HTMLParagraphElement>
+>(({ className, ...props }, ref) => (
+  <p
+    ref={ref}
+    className={cn("text-sm [&_p]:leading-relaxed", className)}
+    {...props}
+  />
+));
+AlertDescription.displayName = "AlertDescription";
+
+export { Alert, AlertTitle, AlertDescription };

@@ -1,8 +1,16 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { signUp, signIn, signInWithGoogle } from "@/context/AuthContext";
+import { useAuth } from "@/context/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Separator } from "@/components/ui/separator";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 export default function SignupPage() {
   const [mode, setMode] = useState<"signup" | "login">("signup");
@@ -10,9 +18,10 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [businessType, setBusinessType] = useState("restaurant");
-  [error, setError] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const { signIn, signInWithGoogle, signUp } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,9 +53,7 @@ export default function SignupPage() {
         router.push("/dashboard");
       }
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "An error occurred"
-      );
+      setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
     }
@@ -59,141 +66,110 @@ export default function SignupPage() {
       await signInWithGoogle();
       router.push("/dashboard");
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Google sign-in failed"
-      );
+      setError(err instanceof Error ? err.message : "Google sign-in failed");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="w-full max-w-md space-y-8 p-4">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-gray-900">
+    <div className="flex items-center justify-center min-h-screen bg-background">
+      <Card className="w-full max-w-md p-8 shadow-lg border border-border">
+        <CardHeader className="space-y-1 text-center">
+          <CardTitle className="text-2xl font-bold">
             {mode === "signup" ? "Create Account" : "Welcome Back"}
-          </h1>
-          <p className="mt-2 text-gray-600">
+          </CardTitle>
+          <CardDescription className="text-muted-foreground text-sm">
             {mode === "signup"
               ? "Join CafeConnect to manage your food business"
               : "Sign in to your account"}
-          </p>
-        </div>
+          </CardDescription>
+        </CardHeader>
 
-        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200">
+        <CardContent className="space-y-6 pt-0">
           <form onSubmit={handleSubmit} className="space-y-6">
             {mode === "signup" && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Business Name
-                  </label>
-                  <input
-                    type="text"
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="businessName">Business Name</FieldLabel>
+                  <Input
+                    id="businessName"
                     value={businessName}
                     onChange={(e) => setBusinessName(e.target.value)}
-                    className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
                     placeholder="e.g. Biryani House"
                     required
                   />
-                </div>
-                <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-700">
-                    Business Type
-                  </label>
-                  <select
-                    value={businessType}
-                    onChange={(e) => setBusinessType(e.target.value)}
-                    className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
-                  >
-                    <option value="restaurant">Restaurant</option>
-                    <option value="cafe">Cafe</option>
-                    <option value="bakery">Bakery</option>
-                    <option value="cloud_kitchen">Cloud Kitchen</option>
-                    <option value="catering">Catering</option>
-                    <option value="food_stall">Food Stall</option>
-                  </select>
-                </div>
-              </>
+                </Field>
+              </FieldGroup>
             )}
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
-                placeholder="you@example.com"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
-                placeholder="••••••••"
-                required
-                minLength={6}
-              />
-            </div>
+
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="email">Email</FieldLabel>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                />
+              </Field>
+            </FieldGroup>
+
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="password">Password</FieldLabel>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  minLength={6}
+                />
+              </Field>
+            </FieldGroup>
 
             {error && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">
-                {error}
-              </div>
+              <Alert variant="destructive">
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-            >
+            <Button type="submit" disabled={loading} className="w-full">
               {loading ? "Loading..." : mode === "signup" ? "Create Account" : "Sign In"}
-            </button>
+            </Button>
           </form>
 
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-gray-300"></span>
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="px-2 bg-white text-gray-500">
-                  Or continue with
-                </span>
-              </div>
-            </div>
+          <Separator className="my-6">
+            Or continue with
+          </Separator>
 
-            <button
-              onClick={handleGoogleSignIn}
-              disabled={loading}
-              className="w-full flex justify-center py-3 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-            >
-              {loading ? "Loading..." : "Sign in with Google"}
-            </button>
-          </div>
+          <Button
+            onClick={handleGoogleSignIn}
+            disabled={loading}
+            variant="outline"
+            className="w-full"
+          >
+            Sign in with Google
+          </Button>
 
-          <p className="text-center text-sm text-gray-600">
+          <p className="text-center text-sm text-muted-foreground">
             {mode === "signup"
               ? "Already have an account?"
               : "Don't have an account?"}
             <button
               onClick={() => setMode(mode === "signup" ? "login" : "signup")}
-              className="font-medium text-blue-600 hover:text-blue-500"
+              className="font-medium text-primary hover:text-primary/90"
             >
               {mode === "signup" ? "Sign in" : "Sign up"}
             </button>
           </p>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
