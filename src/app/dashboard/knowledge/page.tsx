@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, authFetch } from "@/context/AuthContext";
 
 type KnowledgeCategory = "faq" | "policy" | "businessInfo" | "document";
 
@@ -35,8 +35,8 @@ export default function KnowledgePage() {
     if (!user?.tenantId) return;
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/knowledge?tenantId=${user.tenantId}&userId=${user.uid}&role=${user.role || "owner"}`
+      const res = await authFetch(
+        `/api/knowledge?tenantId=${user.tenantId}`
       );
       if (!res.ok) return;
       const payload = (await res.json()) as KnowledgeListResponse;
@@ -64,13 +64,11 @@ export default function KnowledgePage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/knowledge", {
+      const res = await authFetch("/api/knowledge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId: user.tenantId,
-          userId: user.uid,
-          role: user.role || "owner",
           title,
           category,
           content,

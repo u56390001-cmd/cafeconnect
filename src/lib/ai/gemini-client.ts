@@ -1,12 +1,14 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-let genAI: GoogleGenerativeAI | null = null;
+const clients = new Map<string, GoogleGenerativeAI>();
 
 export function getGeminiClient(apiKey: string): GoogleGenerativeAI {
-  if (!genAI) {
-    genAI = new GoogleGenerativeAI(apiKey);
+  let client = clients.get(apiKey);
+  if (!client) {
+    client = new GoogleGenerativeAI(apiKey);
+    clients.set(apiKey, client);
   }
-  return genAI;
+  return client;
 }
 
 export async function generateGeminiText({

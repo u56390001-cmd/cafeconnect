@@ -11,6 +11,40 @@ export interface TenantContext {
   role: string;
 }
 
+export class UnauthorizedError extends Error {
+  status: number;
+  constructor(message: string, status = 401) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export type RequiredRole = "member" | "orders" | "manage" | "owner";
+
+const ROLE_LEVELS: Record<string, number> = {
+  owner: 50,
+  admin: 40,
+  manager: 30,
+  orderStaff: 20,
+  knowledgeEditor: 20,
+  readOnly: 10,
+};
+
+function meetsRole(role: string, required: RequiredRole): boolean {
+  const level = ROLE_LEVELS[role] ?? 0;
+  switch (required) {
+    case "owner":
+      return role === "owner";
+    case "manage":
+      return level >= ROLE_LEVELS.manager;
+    case "orders":
+      return level >= ROLE_LEVELS.orderStaff;
+    case "member":
+    default:
+      return level >= ROLE_LEVELS.readOnly;
+  }
+}
+
 export function tenantPath(tenantId: string, subcollection: string): string {
   return `tenants/${tenantId}/${subcollection}`;
 }
@@ -35,27 +69,32 @@ export function tenantDoc(
 export async function requireTenantScope(
   tenantId: string,
   userId: string,
-  role: string
+  required: RequiredRole = "member"
 ): Promise<TenantContext> {
   if (!tenantId || !userId) {
-    throw new Error("Unauthorized: missing tenant or user identity");
+    throw new UnauthorizedError("Unauthorized: missing tenant or user identity");
   }
 
-  const membershipRef = getAdminDb()
+  const membershipSnap = await getAdminDb()
     .collection(`tenants/${tenantId}/members`)
-    .doc(userId);
-  const membershipSnap = await membershipRef.get();
+    .doc(userId)
+    .get();
 
   if (!membershipSnap.exists) {
-    throw new Error("Unauthorized: user is not a member of this tenant");
+    throw new UnauthorizedError("Unauthorized: user is not a member of this tenant");
   }
 
   const membership = membershipSnap.data();
   if (membership?.status !== "active") {
-    throw new Error("Unauthorized: membership is not active");
+    throw new UnauthorizedError("Unauthorized: membership is not active");
   }
 
-  return { tenantId, userId, role: membership?.role || role };
+  const role = membership?.role || "readOnly";
+  if (!meetsRole(role, required)) {
+    throw new UnauthorizedError("Forbidden: insufficient permissions", 403);
+  }
+
+  return { tenantId, userId, role };
 }
 
 export function scopedQuery<T>(

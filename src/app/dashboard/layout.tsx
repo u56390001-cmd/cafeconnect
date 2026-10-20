@@ -4,12 +4,15 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BookOpen,
+  CalendarDays,
+  ClipboardList,
   LayoutDashboard,
   LogOut,
   MessageSquare,
-  Package,
   Settings,
   Store,
+  Tag,
+  Utensils,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -18,11 +21,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
+  { name: "Menu", href: "/dashboard/menu", icon: Utensils },
+  { name: "Offers", href: "/dashboard/offers", icon: Tag },
+  { name: "Orders", href: "/dashboard/orders", icon: ClipboardList },
+  { name: "Bookings", href: "/dashboard/bookings", icon: CalendarDays },
+  { name: "Conversations", href: "/dashboard/chats", icon: MessageSquare },
   { name: "Knowledge Base", href: "/dashboard/knowledge", icon: BookOpen },
-  { name: "Packages", href: "/dashboard/packages", icon: Package },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
-  { name: "Chat Logs", href: "/dashboard/chats", icon: MessageSquare },
 ];
 
 export default function DashboardLayout({

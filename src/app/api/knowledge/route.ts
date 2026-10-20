@@ -1,22 +1,23 @@
-import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
-import { requireTenantScope, tenantCollection } from "@/lib/tenancy/resolver";
+import { requireTenantScope as requireMember, tenantCollection } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
+import { getSession } from "@/lib/auth/session";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+const CATEGORIES = ["faq", "policy", "businessInfo", "document"] as const;
+type Category = (typeof CATEGORIES)[number];
+
 export async function GET(request: NextRequest): Promise<Response> {
   try {
+    const session = await getSession(request);
+    if (!session) return createApiError("Unauthorized", 401);
+
     const { searchParams } = new URL(request.url);
     const tenantId = searchParams.get("tenantId");
-    const userId = searchParams.get("userId");
-    const role = searchParams.get("role") || "readOnly";
+    if (!tenantId) return createApiError("Missing tenantId", 400);
 
-    if (!tenantId || !userId) {
-      return createApiError("Missing tenant or user", 400);
-    }
-
-    const ctx = await requireTenantScope(tenantId, userId, role);
+    const ctx = await requireMember(tenantId, session.uid);
 
     const snap = await tenantCollection(ctx.tenantId, "knowledgeBase")
       .where("status", "==", "published")
@@ -44,34 +45,34 @@ export async function GET(request: NextRequest): Promise<Response> {
 
 export async function POST(request: NextRequest): Promise<Response> {
   try {
-    const {
-      tenantId,
-      userId,
-      role,
-      title,
-      category,
-      content,
-      language,
-    } = await request.json();
+    const session = await getSession(request);
+    if (!session) return createApiError("Unauthorized", 401);
 
-    if (!tenantId || !userId || !title || !category) {
+    const { tenantId, title, category, content, language } = await request.json();
+
+    if (!tenantId || !title || !category) {
       return createApiError("Missing required fields", 400);
     }
+    if (!CATEGORIES.includes(category)) {
+      return createApiError("Invalid category", 400);
+    }
+    if (typeof title !== "string" || title.length > 200 || !title.trim()) {
+      return createApiError("Invalid title", 400);
+    }
+    if (typeof content !== "string" || content.length > 20000) {
+      return createApiError("Content too long", 400);
+    }
 
-    const ctx = await requireTenantScope(
-      tenantId,
-      userId,
-      role || "readOnly"
-    );
+    const ctx = await requireMember(tenantId, session.uid);
 
     const docRef = tenantCollection(ctx.tenantId, "knowledgeBase").doc();
     await docRef.set({
       documentId: docRef.id,
       tenantId: ctx.tenantId,
-      title,
+      title: title.trim(),
       contentReference: content || "",
-      category: category || "businessInfo",
-      language: language || "en",
+      category: category as Category,
+      language: typeof language === "string" ? language : "en",
       branchId: null,
       sourceType: "manual",
       sourceReference: null,

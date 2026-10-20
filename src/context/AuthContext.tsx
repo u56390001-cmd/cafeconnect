@@ -18,6 +18,21 @@ import {
 import { GoogleAuthProvider } from "firebase/auth";
 import { auth } from "@/lib/firebase/config";
 
+export async function authFetch(
+  input: string,
+  init?: RequestInit
+): Promise<Response> {
+  const token = await auth.currentUser?.getIdToken();
+  const headers = new Headers(init?.headers);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  return fetch(input, { ...init, headers });
+}
+
 export interface AuthUser {
   uid: string;
   email: string | null;
@@ -67,13 +82,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const fetchUserTenant = async (uid: string, authUser: AuthUser) => {
     try {
-      const res = await fetch(`/api/auth/me?uid=${uid}`);
+      const res = await authFetch("/api/auth/me");
       if (res.ok) {
         const data = await res.json();
         setUser({
           ...authUser,
-          tenantId: data.tenantId || null,
-          role: data.role || null,
+          tenantId: data.data?.tenantId || null,
+          role: data.data?.role || null,
         });
       }
     } catch {

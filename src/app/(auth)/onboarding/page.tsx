@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, authFetch } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,12 +49,12 @@ export default function OnboardingPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/onboarding/tenant", {
+      const res = await authFetch("/api/onboarding/tenant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          tenantId: user?.tenantId,
           ...form,
-          ownerUserId: user?.uid,
         }),
       });
 
@@ -147,12 +147,12 @@ export default function OnboardingPage() {
                 <SelectContent>
                   <SelectItem value="restaurant">Restaurant</SelectItem>
                   <SelectItem value="cafe">Cafe</SelectItem>
+                  <SelectItem value="foodStall">Food Stall</SelectItem>
                   <SelectItem value="bakery">Bakery</SelectItem>
-                  <SelectItem value="cloud_kitchen">Cloud Kitchen</SelectItem>
+                  <SelectItem value="takeaway">Takeaway</SelectItem>
+                  <SelectItem value="cloudKitchen">Cloud Kitchen</SelectItem>
+                  <SelectItem value="homeChef">Home Chef</SelectItem>
                   <SelectItem value="catering">Catering</SelectItem>
-                  <SelectItem value="food_stall">Food Stall</SelectItem>
-                  <SelectItem value="travel_agency">Travel Agency</SelectItem>
-                  <SelectItem value="dental_clinic">Dental Clinic</SelectItem>
                 </SelectContent>
               </Select>
             </Field>

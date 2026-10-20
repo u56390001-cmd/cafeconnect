@@ -55,6 +55,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       email: userRecord.email,
       displayName: businessName,
       photoURL: null,
+      tenantId,
+      role: "owner",
       createdAt: new Date(),
       updatedAt: new Date(),
     });

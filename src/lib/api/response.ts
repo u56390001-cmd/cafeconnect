@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { UnauthorizedError } from "@/lib/tenancy/resolver";
 import {
   AUTH_ERROR_MESSAGES,
   friendlyAuthErrorMessage,
@@ -42,6 +43,10 @@ export function handleApiError(scope: string, error: unknown): NextResponse {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const stack = error instanceof Error ? error.stack : undefined;
   console.error(`[api-error] scope=${scope} message="${message}"`, stack);
+
+  if (error instanceof UnauthorizedError) {
+    return createApiError(error.message, error.status);
+  }
 
   const lower = message.toLowerCase();
   if (SERVER_CONFIG_ERROR_HINTS.some((hint) => lower.includes(hint))) {

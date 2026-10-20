@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, authFetch } from "@/context/AuthContext";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ApiKeyCard, SecurityNotice, type KeyStatus } from "@/components/settings/ApiKeyCard";
 import {
@@ -9,6 +9,7 @@ import {
   type WhatsappMode,
   type WhatsappStatus,
 } from "@/components/settings/WhatsappModeCard";
+import { WidgetEmbedCard } from "@/components/settings/WidgetEmbedCard";
 
 interface ApiKeySummary {
   keyId: string;
@@ -58,12 +59,8 @@ export default function SettingsPage() {
     if (!tenantId) return;
     try {
       const [keysRes, waRes] = await Promise.all([
-        fetch(
-          `/api/settings/ai-key?tenantId=${tenantId}&userId=${user?.uid}&role=owner`
-        ),
-        fetch(
-          `/api/settings/whatsapp?tenantId=${tenantId}&userId=${user?.uid}&role=owner`
-        ),
+        authFetch(`/api/settings/ai-key?tenantId=${tenantId}`),
+        authFetch(`/api/settings/whatsapp?tenantId=${tenantId}`),
       ]);
 
       if (keysRes.ok) {
@@ -87,7 +84,7 @@ export default function SettingsPage() {
     } catch {
       setGeminiStatus("error");
     }
-  }, [tenantId, user?.uid]);
+  }, [tenantId]);
 
   useEffect(() => {
     void loadSettings();
@@ -99,13 +96,11 @@ export default function SettingsPage() {
     setMessage(null);
 
     try {
-      const res = await fetch("/api/settings/ai-key", {
+      const res = await authFetch("/api/settings/ai-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId,
-          userId: user.uid,
-          role: user.role || "owner",
           provider,
           keyValue,
         }),
@@ -139,13 +134,11 @@ export default function SettingsPage() {
     setMessage(null);
 
     try {
-      const res = await fetch("/api/settings/whatsapp", {
+      const res = await authFetch("/api/settings/whatsapp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId,
-          userId: user.uid,
-          role: user.role || "owner",
           mode: whatsappMode,
         }),
       });
@@ -244,6 +237,8 @@ export default function SettingsPage() {
             )
           }
         />
+
+        <WidgetEmbedCard tenantId={tenantId} />
 
         <SecurityNotice />
       </div>
