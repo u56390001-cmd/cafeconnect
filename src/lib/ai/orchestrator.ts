@@ -165,13 +165,25 @@ export async function respondToCustomer(options: {
     throw new Error("AI key not configured");
   }
 
-  const reply = await generateGeminiText({
-    apiKey,
-    model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    prompt,
-    temperature: 0.6,
-    maxOutputTokens: 700,
-  });
+  let reply: string;
+  try {
+    reply = await generateGeminiText({
+      apiKey,
+      model: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite",
+      prompt,
+      temperature: 0.6,
+      maxOutputTokens: 700,
+    });
+  } catch {
+    reply =
+      "Sorry, the AI assistant is temporarily unavailable. Please try again in a minute, or contact the business directly.";
+    await addMessage(tenantId, conversationId, {
+      direction: "outbound",
+      senderType: "system",
+      content: reply,
+    });
+    return { reply, conversationId, customerName: context.businessName };
+  }
 
   await addMessage(tenantId, conversationId, {
     direction: "outbound",
