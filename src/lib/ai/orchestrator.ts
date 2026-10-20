@@ -167,7 +167,7 @@ export async function respondToCustomer(options: {
 
   const reply = await generateGeminiText({
     apiKey,
-    model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+    model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     prompt,
     temperature: 0.6,
     maxOutputTokens: 700,

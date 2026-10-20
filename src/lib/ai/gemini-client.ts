@@ -13,7 +13,7 @@ export function getGeminiClient(apiKey: string): GoogleGenerativeAI {
 
 export async function generateGeminiText({
   apiKey,
-  model = "gemini-1.5-flash",
+  model = "gemini-2.5-flash",
   prompt,
   temperature = 0.7,
   maxOutputTokens = 1024,
