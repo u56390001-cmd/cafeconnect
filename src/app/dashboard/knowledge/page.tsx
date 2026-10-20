@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
 
 type KnowledgeCategory = "faq" | "policy" | "businessInfo" | "document";
@@ -31,13 +31,7 @@ export default function KnowledgePage() {
   const [content, setContent] = useState("");
   const [language, setLanguage] = useState("en");
 
-  useEffect(() => {
-    if (user?.tenantId) {
-      loadItems();
-    }
-  }, [user]);
-
-  const loadItems = async () => {
+  const loadItems = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
     try {
@@ -52,7 +46,11 @@ export default function KnowledgePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    void loadItems();
+  }, [loadItems]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();

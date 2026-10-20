@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ApiKeyCard, SecurityNotice, type KeyStatus } from "@/components/settings/ApiKeyCard";
@@ -54,12 +54,7 @@ export default function SettingsPage() {
     }
   }, [user]);
 
-  useEffect(() => {
-    if (!tenantId) return;
-    void loadSettings();
-  }, [tenantId]);
-
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     if (!tenantId) return;
     try {
       const [keysRes, waRes] = await Promise.all([
@@ -92,7 +87,11 @@ export default function SettingsPage() {
     } catch {
       setGeminiStatus("error");
     }
-  };
+  }, [tenantId, user?.uid]);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
 
   const saveKey = async (provider: string, keyValue: string) => {
     if (!tenantId || !user) return;

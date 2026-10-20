@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
+import { friendlyAuthErrorMessage } from "@/lib/auth/auth-errors";
 
 export default function SignupPage() {
   const [mode, setMode] = useState<"signup" | "login">("signup");
@@ -51,7 +51,7 @@ export default function SignupPage() {
         router.push("/dashboard");
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      setError(friendlyAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -64,7 +64,7 @@ export default function SignupPage() {
       await signInWithGoogle();
       router.push("/dashboard");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Google sign-in failed");
+      setError(friendlyAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -142,9 +142,13 @@ export default function SignupPage() {
             </Button>
           </form>
 
-          <Separator className="my-6">
-            Or continue with
-          </Separator>
+          <div className="my-6 flex items-center gap-3">
+            <hr className="h-px w-full bg-border" />
+            <span className="text-center text-xs uppercase text-muted-foreground">
+              Or continue with
+            </span>
+            <hr className="h-px w-full bg-border" />
+          </div>
 
           <Button
             onClick={handleGoogleSignIn}

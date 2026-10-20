@@ -1,7 +1,7 @@
 import { getAdminDb } from "@/lib/firebase/admin";
 import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { encrypt, maskHint } from "@/lib/security/encryption";
-import { createApiResponse, createApiError } from "@/lib/api/response";
+import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -52,8 +52,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       status: "pending_validation",
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal error";
-    return createApiError(message, 500);
+    return handleApiError("api/settings/ai-key", error);
   }
 }
 
@@ -91,7 +90,6 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     return createApiResponse({ keys });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal error";
-    return createApiError(message, 500);
+    return handleApiError("api/settings/ai-key", error);
   }
 }

@@ -1,5 +1,5 @@
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
-import { createApiResponse, createApiError } from "@/lib/api/response";
+import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +40,6 @@ export async function GET(request: NextRequest): Promise<Response> {
       role,
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal error";
-    return createApiError(message, 500);
+    return handleApiError("api/auth/me", error);
   }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { handleApiError } from "@/lib/api/response";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,6 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     return NextResponse.json({ received: true }, { status: 200 });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Webhook error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError("api/webhooks/whatsapp/meta", error);
   }
 }

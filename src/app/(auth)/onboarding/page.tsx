@@ -87,7 +87,7 @@ export default function OnboardingPage() {
             </div>
             <CardTitle className="text-2xl font-bold">Setup Complete!</CardTitle>
             <CardDescription className="text-muted-foreground text-sm">
-              Your business "{form.businessName}" is ready.
+              Your business &quot;{form.businessName}&quot; is ready.
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-0">

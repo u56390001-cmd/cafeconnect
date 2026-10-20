@@ -1,7 +1,7 @@
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getGeminiClient } from "@/lib/ai/gemini-client";
 import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
-import { createApiError, createApiResponse } from "@/lib/api/response";
+import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -61,7 +61,6 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     return createApiResponse({ text, messageId: msgRef.id });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal error";
-    return createApiError(message, 500);
+    return handleApiError("api/widget/message", error);
   }
 }
