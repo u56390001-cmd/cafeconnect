@@ -240,9 +240,9 @@ export async function quoteOrder(input: {
         tenantDoc(input.tenantId, "menuItems", entry.itemId).get()
       )
     ),
-    input.fulfilmentType === "delivery"
-      ? tenantDoc(input.tenantId, "settings", "delivery").get()
-      : Promise.resolve(null),
+    // Read the delivery settings for every fulfilment type: the minimum
+    // order value applies to pickup orders too.
+    tenantDoc(input.tenantId, "settings", "delivery").get(),
     tenantCollection(input.tenantId, "offers")
       .where("status", "==", "active")
       .get(),
@@ -578,9 +578,9 @@ export async function createOrder(input: CreateOrderInput): Promise<{
         tenantDoc(input.tenantId, "menuItems", entry.itemId).get()
       )
     ),
-    input.fulfilmentType === "delivery"
-      ? tenantDoc(input.tenantId, "settings", "delivery").get()
-      : Promise.resolve(null),
+    // Read the delivery settings for every fulfilment type: the minimum
+    // order value applies to pickup orders too.
+    tenantDoc(input.tenantId, "settings", "delivery").get(),
     tenantCollection(input.tenantId, "offers")
       .where("status", "==", "active")
       .get(),

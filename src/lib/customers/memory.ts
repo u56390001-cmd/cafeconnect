@@ -55,6 +55,17 @@ export const ALLOWED_MEMORY_KEYS = [
 
 export type AllowedMemoryKey = (typeof ALLOWED_MEMORY_KEYS)[number];
 
+/** Robust timestamp conversion (Firestore Timestamp, Date or ISO string). */
+function toMillis(value: unknown): number {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  const maybe = value as { toMillis?: () => number; seconds?: number };
+  if (typeof maybe.toMillis === "function") return maybe.toMillis();
+  if (typeof maybe.seconds === "number") return maybe.seconds * 1000;
+  const parsed = new Date(String(value)).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 export async function listMemories(
   tenantId: string,
   customerId: string
@@ -68,7 +79,10 @@ export async function listMemories(
   const now = Date.now();
   return snap.docs
     .map((doc) => doc.data() as CustomerMemory)
-    .filter((memory) => !memory.expiresAt || new Date(memory.expiresAt).getTime() > now);
+    .filter((memory) => {
+      if (!memory.expiresAt) return true;
+      return toMillis(memory.expiresAt) > now;
+    });
 }
 
 /**
@@ -101,12 +115,13 @@ export async function saveMemory(input: {
     .collection("memories");
 
   // Supersede a conflicting fact with the same key.
-  const existing = await memoriesRef
-    .where("key", "==", input.key)
-    .where("status", "==", "active")
-    .get();
+  // Single-field query on purpose: a composite (key + status) index is not
+  // guaranteed to exist on every project.
+  const existing = await memoriesRef.where("key", "==", input.key).get();
   for (const doc of existing.docs) {
-    await doc.ref.set({ status: "stale", updatedAt: now }, { merge: true });
+    if (doc.data().status === "active") {
+      await doc.ref.set({ status: "stale", updatedAt: now }, { merge: true });
+    }
   }
 
   const memoryId = `mem_${input.key}_${Date.now().toString(36)}`;
@@ -168,6 +183,16 @@ export async function disableMemory(
     },
     { merge: true }
   );
+
+  // Consent withdrawal also deactivates the stored facts.
+  const snap = await tenantCollection(tenantId, "customers")
+    .doc(customerId)
+    .collection("memories")
+    .where("status", "==", "active")
+    .get();
+  for (const doc of snap.docs) {
+    await doc.ref.set({ status: "deleted", updatedAt: new Date() }, { merge: true });
+  }
 }
 
 /** Re-enables memory (customer or staff action). */

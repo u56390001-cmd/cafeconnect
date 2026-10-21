@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { resolveWidget, checkRateLimit } from "@/lib/widget/service";
+import { checkSharedRateLimit } from "@/lib/security/rate-limit";
 import { respondToCustomer } from "@/lib/ai/orchestrator";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,9 @@ interface StreamBody {
  */
 export async function POST(request: NextRequest): Promise<Response> {
   const ip = request.headers.get("x-forwarded-for") ?? "local";
-  if (!checkRateLimit(`widget:${ip}`)) {
+  const memoryAllowed = checkRateLimit(`msg-stream:${ip}`);
+  const limit = await checkSharedRateLimit("widget-stream", 30, memoryAllowed);
+  if (!limit.allowed) {
     return new Response(JSON.stringify({ error: "Too many requests" }), {
       status: 429,
       headers: { "Content-Type": "application/json" },

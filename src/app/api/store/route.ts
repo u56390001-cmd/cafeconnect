@@ -1,4 +1,5 @@
 import { resolveWidget, checkRateLimit } from "@/lib/widget/service";
+import { checkSharedRateLimit } from "@/lib/security/rate-limit";
 import { createOrder, type OrderItemInput } from "@/lib/services/orders";
 import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
@@ -11,7 +12,9 @@ export async function GET(request: NextRequest): Promise<Response> {
     const key = new URL(request.url).searchParams.get("key");
     if (!key) return createApiError("Missing key", 400);
     const ip = request.headers.get("x-forwarded-for") ?? "local";
-    if (!checkRateLimit(`store:${ip}`)) return createApiError("Too many requests", 429);
+    const memoryAllowed = checkRateLimit(`store:${ip}`);
+    const limit = await checkSharedRateLimit("store-catalog", 60, memoryAllowed);
+    if (!limit.allowed) return createApiError("Too many requests", 429);
 
     const config = await resolveWidget(key);
     if (!config || !config.allowStore) {
@@ -110,7 +113,9 @@ export async function GET(request: NextRequest): Promise<Response> {
 export async function POST(request: NextRequest): Promise<Response> {
   try {
     const ip = request.headers.get("x-forwarded-for") ?? "local";
-    if (!checkRateLimit(`storeorder:${ip}`)) {
+    const memoryAllowed = checkRateLimit(`storeorder:${ip}`);
+    const limit = await checkSharedRateLimit("store-order", 10, memoryAllowed);
+    if (!limit.allowed) {
       return createApiError("Too many requests", 429);
     }
 

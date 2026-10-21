@@ -1,5 +1,6 @@
 ﻿import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { resolveWidget, checkRateLimit } from "@/lib/widget/service";
+import { checkSharedRateLimit } from "@/lib/security/rate-limit";
 import { respondToCustomer } from "@/lib/ai/orchestrator";
 import { NextRequest } from "next/server";
 
@@ -9,7 +10,9 @@ export const maxDuration = 60;
 export async function POST(request: NextRequest): Promise<Response> {
   try {
     const ip = request.headers.get("x-forwarded-for") ?? "local";
-    if (!checkRateLimit(`msg:${ip}`)) {
+    const memoryAllowed = checkRateLimit(`msg:${ip}`);
+    const limit = await checkSharedRateLimit("widget-message", 30, memoryAllowed);
+    if (!limit.allowed) {
       return createApiError("Too many requests, please slow down", 429);
     }
 

@@ -1,7 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { BookOpen, Pencil, Trash2 } from "lucide-react";
 import { useAuth, authFetch } from "@/context/AuthContext";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Empty } from "@/components/ui/empty";
+import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
 
 type KnowledgeCategory = "faq" | "policy" | "businessInfo" | "document";
 
@@ -12,237 +21,353 @@ interface KnowledgeItem {
   language: string;
   status: string;
   version: number;
+  content: string;
   createdAt: string;
   updatedAt: string;
 }
 
-interface KnowledgeListResponse {
-  success: boolean;
-  data: { items: KnowledgeItem[] };
-}
+const CATEGORIES: Array<{ value: KnowledgeCategory; label: string }> = [
+  { value: "businessInfo", label: "Business Info" },
+  { value: "faq", label: "FAQ" },
+  { value: "policy", label: "Policy" },
+  { value: "document", label: "Document" },
+];
+
+const LANGUAGES = [
+  { value: "en", label: "English" },
+  { value: "ur", label: "Urdu" },
+  { value: "ur-Latn", label: "Roman Urdu" },
+];
 
 export default function KnowledgePage() {
   const { user } = useAuth();
+  const tenantId = user?.tenantId;
   const [items, setItems] = useState<KnowledgeItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [title, setTitle] = useState("");
-  const [category, setCategory] = useState<KnowledgeCategory>("businessInfo");
-  const [content, setContent] = useState("");
-  const [language, setLanguage] = useState("en");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    title: "",
+    category: "businessInfo" as KnowledgeCategory,
+    language: "en",
+    content: "",
+    status: "published",
+  });
 
-  const loadItems = useCallback(async () => {
-    if (!user?.tenantId) return;
+  const load = useCallback(async () => {
+    if (!tenantId) return;
     setLoading(true);
     try {
-      const res = await authFetch(
-        `/api/knowledge?tenantId=${user.tenantId}`
-      );
-      if (!res.ok) return;
-      const payload = (await res.json()) as KnowledgeListResponse;
-      setItems(payload.data?.items ?? []);
+      const res = await authFetch(`/api/knowledge?tenantId=${tenantId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setItems(data.data?.items ?? []);
+      }
     } catch {
       setError("Failed to load knowledge base");
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [tenantId]);
 
   useEffect(() => {
-    void loadItems();
-  }, [loadItems]);
+    void load();
+  }, [load]);
 
-  const handleSave = async (e: React.FormEvent) => {
+  async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (!user?.tenantId) return;
-    if (!title.trim() || !content.trim()) {
+    if (!tenantId) return;
+    if (!form.title.trim() || !form.content.trim()) {
       setError("Title and content are required");
       return;
     }
-
+    setSaving(true);
     setError("");
-    setLoading(true);
-
+    setMessage("");
     try {
       const res = await authFetch("/api/knowledge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: editingId ? "PATCH" : "POST",
         body: JSON.stringify({
-          tenantId: user.tenantId,
-          title,
-          category,
-          content,
-          language,
+          tenantId,
+          documentId: editingId,
+          title: form.title,
+          category: form.category,
+          language: form.language,
+          content: form.content,
+          status: form.status,
         }),
       });
-
+      const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error?.message || "Failed to save item");
+        setError(payload?.error?.message ?? "Failed to save entry");
+        return;
       }
-
-      setTitle("");
-      setContent("");
-      await loadItems();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to save item");
+      setMessage(
+        editingId ? "Entry updated." : "Entry added to the knowledge base."
+      );
+      setForm({
+        title: "",
+        category: "businessInfo",
+        language: "en",
+        content: "",
+        status: "published",
+      });
+      setEditingId(null);
+      await load();
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
-  };
+  }
 
-  const categories = [
-    { value: "faq", label: "FAQ" },
-    { value: "policy", label: "Policy" },
-    { value: "businessInfo", label: "Business Info" },
-    { value: "document", label: "Document" },
-  ];
+  function startEdit(item: KnowledgeItem) {
+    setEditingId(item.documentId);
+    setForm({
+      title: item.title,
+      category: item.category,
+      language: item.language ?? "en",
+      content: item.content ?? "",
+      status: item.status ?? "published",
+    });
+  }
 
-  if (!user?.tenantId) return <div className="p-4">Loading...</div>;
+  async function archive(item: KnowledgeItem) {
+    if (!tenantId) return;
+    const res = await authFetch(
+      `/api/knowledge?tenantId=${tenantId}&documentId=${item.documentId}`,
+      { method: "DELETE" }
+    );
+    if (res.ok) {
+      setMessage("Entry archived. The assistant will stop using it.");
+      await load();
+    }
+  }
+
+  async function togglePublish(item: KnowledgeItem) {
+    if (!tenantId) return;
+    const next = item.status === "published" ? "draft" : "published";
+    const res = await authFetch("/api/knowledge", {
+      method: "PATCH",
+      body: JSON.stringify({
+        tenantId,
+        documentId: item.documentId,
+        status: next,
+      }),
+    });
+    if (res.ok) {
+      setMessage(
+        next === "published"
+          ? "Entry published - the assistant can use it now."
+          : "Entry moved to draft."
+      );
+      await load();
+    }
+  }
+
+  if (!tenantId) return <NoTenantNotice />;
 
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Knowledge Base</h1>
-          <p className="text-gray-600">
-            Business information, FAQs, policies, and packages
-          </p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <header>
+        <h1 className="flex items-center gap-2 text-2xl font-bold">
+          <BookOpen className="size-5 text-primary" aria-hidden="true" />
+          Knowledge Base
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Business facts the AI agent is allowed to use. Only published entries
+          reach the assistant.
+        </p>
+      </header>
 
       {error && (
-        <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-600">
+        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
-        </div>
+        </p>
+      )}
+      {message && (
+        <p className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
+          {message}
+        </p>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Add Item Form */}
-        <div className="lg:col-span-2">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Add Business Information
-            </h2>
-            <form onSubmit={handleSave} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Title
-                </label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
-                  placeholder="e.g. Business Hours"
-                  required
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            {editingId ? "Edit entry" : "Add entry"}
+          </CardTitle>
+          <CardDescription>
+            Keep entries short and factual: hours, delivery area, payment
+            methods, policies, FAQs.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={save} className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="kbTitle">Title</Label>
+                <Input
+                  id="kbTitle"
+                  value={form.title}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  placeholder="e.g. Opening Hours"
                 />
               </div>
-
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700">
-                  Category
-                </label>
+              <div className="space-y-1.5">
+                <Label htmlFor="kbCategory">Category</Label>
                 <select
-                  value={category}
+                  id="kbCategory"
+                  value={form.category}
                   onChange={(e) =>
-                    setCategory(e.target.value as KnowledgeCategory)
+                    setForm({ ...form, category: e.target.value as KnowledgeCategory })
                   }
-                  className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                 >
-                  {categories.map((c) => (
+                  {CATEGORIES.map((c) => (
                     <option key={c.value} value={c.value}>
                       {c.label}
                     </option>
                   ))}
                 </select>
               </div>
-
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700">
-                  Content
-                </label>
-                <textarea
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  rows={4}
-                  className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
-                  placeholder="Enter business details, FAQ answer, or policy text..."
-                  required
-                />
+              <div className="space-y-1.5">
+                <Label htmlFor="kbLanguage">Language</Label>
+                <select
+                  id="kbLanguage"
+                  value={form.language}
+                  onChange={(e) => setForm({ ...form, language: e.target.value })}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.value} value={l.value}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700">
-                  Language
-                </label>
-                <input
-                  type="text"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 text-gray-900 focus:border-blue-500 focus:ring-blue-500"
-                  placeholder="en"
-                />
+              <div className="space-y-1.5">
+                <Label htmlFor="kbStatus">Status</Label>
+                <select
+                  id="kbStatus"
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="published">Published</option>
+                  <option value="draft">Draft</option>
+                </select>
               </div>
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-              >
-                {loading ? "Saving..." : "Save to Knowledge Base"}
-              </button>
-            </form>
-          </div>
-        </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="kbContent">Content</Label>
+              <Textarea
+                id="kbContent"
+                value={form.content}
+                onChange={(e) => setForm({ ...form, content: e.target.value })}
+                rows={4}
+                placeholder="Open daily 12pm to 12am. Delivery within 6 km, PKR 100 fee."
+              />
+            </div>
 
-        {/* Items List */}
-        <div className="lg:col-span-1">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Knowledge Items ({items.length})
-            </h2>
-            {loading ? (
-              <div className="h-32 flex items-center justify-center text-gray-500">
-                Loading...
-              </div>
-            ) : items.length === 0 ? (
-              <div className="h-32 flex items-center justify-center text-gray-400">
-                No items yet
-              </div>
-            ) : (
-              <ul className="space-y-3">
-                {items.map((item, idx) => (
-                  <li key={idx} className="p-3 rounded-md border border-gray-100 bg-gray-50">
-                    <h3 className="text-sm font-medium text-gray-900 truncate">
-                      {item.title}
-                    </h3>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {item.category} • {item.language}
+            <div className="flex gap-2">
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving..." : editingId ? "Save changes" : "Add entry"}
+              </Button>
+              {editingId && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setEditingId(null);
+                    setForm({
+                      title: "",
+                      category: "businessInfo",
+                      language: "en",
+                      content: "",
+                      status: "published",
+                    });
+                  }}
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between text-base">
+            <span>Entries ({items.length})</span>
+            <Button variant="outline" size="sm" onClick={() => void load()}>
+              Refresh
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading knowledge base...</p>
+          ) : items.length === 0 ? (
+            <Empty>
+              <p>No knowledge entries yet.</p>
+              <p className="text-xs text-muted-foreground">
+                Add your hours, delivery area and policies so the assistant
+                answers from verified facts.
+              </p>
+            </Empty>
+          ) : (
+            <ul className="divide-y">
+              {items.map((item) => (
+                <li key={item.documentId} className="flex flex-wrap gap-3 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{item.title}</p>
+                    <p className="line-clamp-2 text-xs text-muted-foreground">
+                      {item.content}
                     </p>
-                    <span className="text-xs font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                    <p className="pt-1 text-[10px] text-muted-foreground">
+                      {item.category} · {item.language} · v{item.version}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant={
+                        item.status === "published" ? "default" : "outline"
+                      }
+                    >
                       {item.status}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Example Content Section */}
-      <div className="mt-8 bg-blue-50 border border-blue-200 rounded-md p-4">
-        <h3 className="text-sm font-semibold text-blue-900 mb-2">
-          Example Entries
-        </h3>
-        <ul className="text-sm text-blue-700 space-y-1 list-disc list-inside">
-          <li>Business Hours: Mon-Sat 10:00 AM - 10:00 PM</li>
-          <li>Delivery Fee: PKR 100 within 5km radius</li>
-          <li>Popular Items: Chicken Biryani, Beef Karahi, Fresh Naan</li>
-          <li>Cancellation Policy: Free cancellation up to 2 hours before order</li>
-        </ul>
-      </div>
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void togglePublish(item)}
+                    >
+                      {item.status === "published" ? "Unpublish" : "Publish"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => startEdit(item)}
+                    >
+                      <Pencil data-icon="inline-start" />
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void archive(item)}
+                    >
+                      <Trash2 data-icon="inline-start" />
+                      Archive
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
