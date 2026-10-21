@@ -85,6 +85,12 @@ async function ensureWebhookToken(tenantId: string): Promise<string> {
     { tenantId, qrWebhookToken: webhookToken, updatedAt: new Date() },
     { merge: true }
   );
+  // Top-level mapping avoids collection-group queries (which need extra
+  // Firestore indexes) and keeps webhook routing to a single doc read.
+  await getAdminDb()
+    .collection("qrWebhookTokens")
+    .doc(webhookToken)
+    .set({ tenantId, createdAt: new Date() }, { merge: true });
   return webhookToken;
 }
 
@@ -93,12 +99,11 @@ export async function resolveTenantByWebhookToken(
 ): Promise<string | null> {
   if (!webhookToken) return null;
   const snap = await getAdminDb()
-    .collectionGroup("whatsapp")
-    .where("qrWebhookToken", "==", webhookToken)
-    .limit(1)
+    .collection("qrWebhookTokens")
+    .doc(webhookToken)
     .get();
-  if (snap.empty) return null;
-  return (snap.docs[0].data()?.tenantId as string) ?? null;
+  if (!snap.exists) return null;
+  return (snap.data()?.tenantId as string) ?? null;
 }
 
 export async function getTenantWebhookSecret(
