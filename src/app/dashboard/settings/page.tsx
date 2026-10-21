@@ -10,6 +10,7 @@ import {
   type WhatsappStatus,
 } from "@/components/settings/WhatsappModeCard";
 import { WidgetEmbedCard } from "@/components/settings/WidgetEmbedCard";
+import { QrTrialCard } from "@/components/settings/QrTrialCard";
 
 interface ApiKeySummary {
   keyId: string;
@@ -212,31 +213,26 @@ export default function SettingsPage() {
           onSave={saveWhatsappMode}
         />
 
-        <ApiKeyCard
-          title="WhatsApp Credential"
-          description={
-            whatsappMode === "meta"
-              ? "Meta WhatsApp Cloud API access token for this tenant."
-              : "QR trial provider session key for this tenant."
-          }
-          provider={whatsappMode === "meta" ? "meta_whatsapp" : "qr_provider"}
-          status={
-            whatsappStatus === "connected"
-              ? "connected"
-              : whatsappStatus === "not_configured"
-              ? "not_configured"
-              : "pending_validation"
-          }
-          placeholder={whatsappMode === "meta" ? "EAAG..." : "wa.0..."}
-          loading={loading}
-          footnote="Tenant-owned credential. Platform-owned trial credentials are never exposed here."
-          onSave={(value) =>
-            saveKey(
-              whatsappMode === "meta" ? "meta_whatsapp" : "qr_provider",
-              value
-            )
-          }
-        />
+        {whatsappMode === "qr_trial" ? (
+          <QrTrialCard tenantId={tenantId} />
+        ) : (
+          <ApiKeyCard
+            title="WhatsApp Credential"
+            description="Meta WhatsApp Cloud API access token for this tenant."
+            provider="meta_whatsapp"
+            status={
+              whatsappStatus === "connected"
+                ? "connected"
+                : whatsappStatus === "not_configured"
+                ? "not_configured"
+                : "pending_validation"
+            }
+            placeholder="EAAG..."
+            loading={loading}
+            footnote="Tenant-owned credential. Platform-owned trial credentials are never exposed here."
+            onSave={(value) => saveKey("meta_whatsapp", value)}
+          />
+        )}
 
         <WidgetEmbedCard tenantId={tenantId} />
 
