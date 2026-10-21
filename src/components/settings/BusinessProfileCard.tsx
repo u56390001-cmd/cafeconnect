@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { Store } from "lucide-react";
@@ -24,8 +24,8 @@ interface BusinessForm {
   address: string;
   hours: string;
   currency: string;
-  deliveryFeeMinor: string;
-  minimumOrderMinor: string;
+  deliveryFeeRupees: string;
+  minimumOrderRupees: string;
   deliveryArea: string;
   pickupAvailable: boolean;
   paymentMethods: string;
@@ -43,8 +43,8 @@ const EMPTY: BusinessForm = {
   address: "",
   hours: "",
   currency: "PKR",
-  deliveryFeeMinor: "0",
-  minimumOrderMinor: "0",
+  deliveryFeeRupees: "0",
+  minimumOrderRupees: "0",
   deliveryArea: "",
   pickupAvailable: true,
   paymentMethods: "Cash on delivery",
@@ -80,8 +80,8 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
         address: d.address ?? "",
         hours: d.hours ?? "",
         currency: d.currency ?? "PKR",
-        deliveryFeeMinor: String(d.deliveryFeeMinor ?? 0),
-        minimumOrderMinor: String(d.minimumOrderMinor ?? 0),
+        deliveryFeeRupees: String(Math.round(Number(d.deliveryFeeMinor ?? 0) / 100)),
+        minimumOrderRupees: String(Math.round(Number(d.minimumOrderMinor ?? 0) / 100)),
         deliveryArea: d.deliveryArea ?? "",
         pickupAvailable: d.pickupAvailable !== false,
         paymentMethods: d.paymentMethods ?? "",
@@ -111,8 +111,8 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
         body: JSON.stringify({
           tenantId,
           ...form,
-          deliveryFeeMinor: Number(form.deliveryFeeMinor || 0),
-          minimumOrderMinor: Number(form.minimumOrderMinor || 0),
+          deliveryFeeMinor: Math.round(Number(form.deliveryFeeRupees || 0) * 100),
+          minimumOrderMinor: Math.round(Number(form.minimumOrderRupees || 0) * 100),
         }),
       });
       const payload = await res.json().catch(() => null);
@@ -244,24 +244,29 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="deliveryFee">Delivery fee (in smallest unit, e.g. 100 = PKR 1)</Label>
+            <Label htmlFor="deliveryFee">Delivery fee (PKR)</Label>
             <Input
               id="deliveryFee"
               type="number"
               min={0}
-              value={form.deliveryFeeMinor}
-              onChange={(e) => set("deliveryFeeMinor", e.target.value)}
+              step={1}
+              value={form.deliveryFeeRupees}
+              onChange={(e) => set("deliveryFeeRupees", e.target.value)}
             />
+            <p className="text-xs text-muted-foreground">
+              Charged on delivery orders. Enter whole rupees, e.g. 100 = PKR 100.
+            </p>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="minOrder">Minimum order (smallest unit)</Label>
+            <Label htmlFor="minOrder">Minimum order (PKR)</Label>
             <Input
               id="minOrder"
               type="number"
               min={0}
-              value={form.minimumOrderMinor}
-              onChange={(e) => set("minimumOrderMinor", e.target.value)}
+              step={1}
+              value={form.minimumOrderRupees}
+              onChange={(e) => set("minimumOrderRupees", e.target.value)}
             />
           </div>
 
@@ -354,3 +359,4 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
     </Card>
   );
 }
+

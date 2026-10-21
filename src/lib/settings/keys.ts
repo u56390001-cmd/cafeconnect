@@ -7,7 +7,29 @@ export interface TenantApiKey {
   key: string;
 }
 
+const KEY_CACHE_TTL_MS = 60_000;
+const keyCache = new Map<string, { expiresAt: number; value: TenantApiKey | null }>();
+
+export function invalidateTenantApiKeyCache(tenantId: string): void {
+  keyCache.delete(tenantId);
+}
+
 export async function getTenantApiKey(
+  tenantId: string,
+  provider: "gemini" | "meta_whatsapp" | "qr_provider"
+): Promise<TenantApiKey | null> {
+  const cacheKey = `${tenantId}:${provider}`;
+  const cached = keyCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const value = await loadTenantApiKey(tenantId, provider);
+  keyCache.set(cacheKey, { value, expiresAt: Date.now() + KEY_CACHE_TTL_MS });
+  return value;
+}
+
+async function loadTenantApiKey(
   tenantId: string,
   provider: "gemini" | "meta_whatsapp" | "qr_provider"
 ): Promise<TenantApiKey | null> {

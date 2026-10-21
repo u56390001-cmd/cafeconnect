@@ -47,6 +47,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         valuePct: d.valuePct ?? null,
         valueMinor: d.valueMinor ?? null,
         minOrderMinor: d.minOrderMinor ?? null,
+        scopeCategoryIds: d.scopeCategoryIds ?? [],
         status: d.status,
         startAt: d.startAt ?? null,
         endAt: d.endAt ?? null,
@@ -65,7 +66,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     if (!session) return createApiError("Unauthorized", 401);
 
     const body = await request.json();
-    const { tenantId, name, description, type, value, minOrder, status, startAt, endAt } =
+    const { tenantId, name, description, type, value, minOrder, status, startAt, endAt, scopeCategoryIds } =
       body;
 
     if (!tenantId) return createApiError("Missing tenantId", 400);
@@ -113,6 +114,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         typeof minOrder === "number" && Number.isInteger(minOrder) && minOrder >= 0
           ? minOrder
           : null,
+      // Optional scope: the discount only applies to these categories.
+      scopeCategoryIds: Array.isArray(scopeCategoryIds)
+        ? scopeCategoryIds
+            .filter((id: unknown): id is string => typeof id === "string")
+            .slice(0, 20)
+        : [],
       stackable: false,
       status: status as OfferStatus,
       startAt: dates?.start ?? null,

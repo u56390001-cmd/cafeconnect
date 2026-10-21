@@ -81,16 +81,27 @@ function OffersPage() {
     description: "",
     status: "draft",
     endAt: "",
+    scopeCategoryId: "",
   });
+  const [categories, setCategories] = useState<
+    Array<{ categoryId: string; name: string }>
+  >([]);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const res = await authFetch(`/api/offers?tenantId=${tenantId}`);
-      if (res.ok) {
-        const data = await res.json();
+      const [offersRes, catsRes] = await Promise.all([
+        authFetch(`/api/offers?tenantId=${tenantId}`),
+        authFetch(`/api/menu/categories?tenantId=${tenantId}`),
+      ]);
+      if (offersRes.ok) {
+        const data = await offersRes.json();
         setOffers(data.data?.offers ?? []);
+      }
+      if (catsRes.ok) {
+        const data = await catsRes.json();
+        setCategories(data.data?.categories ?? []);
       }
     } catch {
       setError("Failed to load offers");
@@ -118,6 +129,7 @@ function OffersPage() {
         description: form.description,
         status: form.status,
         endAt: form.endAt || undefined,
+        scopeCategoryIds: form.scopeCategoryId ? [form.scopeCategoryId] : [],
       };
       const res = await authFetch("/api/offers", {
         method: "POST",
@@ -127,7 +139,7 @@ function OffersPage() {
         const err = await res.json().catch(() => null);
         setError(err?.error?.message ?? "Failed to save offer");
       } else {
-        setForm({ name: "", type: "percentage", value: "10", minOrder: "", description: "", status: "draft", endAt: "" });
+        setForm({ name: "", type: "percentage", value: "10", minOrder: "", description: "", status: "draft", endAt: "", scopeCategoryId: "" });
         await load();
       }
     } finally {
@@ -219,6 +231,28 @@ function OffersPage() {
                 onChange={(e) => setForm({ ...form, minOrder: e.target.value })}
                 placeholder="e.g. 500"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offerScope">Applies to category (optional)</Label>
+              <select
+                id="offerScope"
+                value={form.scopeCategoryId}
+                onChange={(e) =>
+                  setForm({ ...form, scopeCategoryId: e.target.value })
+                }
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Whole order</option>
+                {categories.map((c) => (
+                  <option key={c.categoryId} value={c.categoryId}>
+                    {c.name} only
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Scoped offers discount only the items of that category, and the
+                minimum order is checked against that category subtotal.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="offerEnd">End date (optional)</Label>

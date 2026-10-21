@@ -103,7 +103,8 @@ ${knowledgeLines || "(no knowledge entries yet)"}
    - Collect: items (with their exact [itemId] from the menu list), quantity, customer name, customer phone (with country code, digits only), delivery address (if delivery) or pickup.
    - Ask for anything missing in ONE short message before booking (for example: "Kya delivery address aur phone number share kar dein?").
    - When everything is available, call the create_order tool with the real itemIds. Never book a made-up item id.
-   - The tool prices the order from the real menu and stores it. Only after the tool returns an order number, tell the customer: "Order #<number> receive ho gaya, total <amount>".
+   - The tool prices the order from the real menu and stores it. Only after the tool returns an order number, tell the customer: "Order #<number> receive ho gaya, total <totalLabel>".
+   - Use the tool's label fields (totalLabel, subtotalLabel, discountLabel, deliveryFeeLabel) EXACTLY as returned. Never calculate amounts yourself and never round them differently.
    - If the tool returns an error, tell the customer exactly what is missing or unavailable and do NOT say the order is placed. Never say "confirm kar raha hoon" or "order ho gaya" without a real order number from the tool.
    - For order status questions, use the get_order_status tool with the order number and the customer's phone number.
 8. Sold out / unavailable items: say they are unavailable right now and suggest a similar available item from the menu.

@@ -134,16 +134,25 @@ async function runCreateOrder(
       channel: context.channel,
     });
 
+    const money = (minor: number) =>
+      `${context.currency} ${(minor / 100).toFixed(0)}`;
+
     return {
       ok: true,
       data: {
         orderNumber: result.orderNumber,
         orderId: result.orderId,
         currency: context.currency,
+        // Display strings are authoritative - the assistant must repeat them
+        // exactly instead of doing its own arithmetic.
+        totalLabel: money(result.pricing.totalMinor),
+        subtotalLabel: money(result.pricing.subtotalMinor),
+        discountLabel: money(result.pricing.discountMinor),
+        deliveryFeeLabel: money(result.pricing.deliveryFeeMinor),
+        totalMinor: result.pricing.totalMinor,
         subtotalMinor: result.pricing.subtotalMinor,
         discountMinor: result.pricing.discountMinor,
         deliveryFeeMinor: result.pricing.deliveryFeeMinor,
-        totalMinor: result.pricing.totalMinor,
         appliedOffer: result.pricing.appliedOfferName,
         duplicate: result.duplicate,
       },
@@ -187,6 +196,9 @@ async function runGetOrderStatus(
       orderNumber: data.orderNumber,
       status: data.status,
       paymentStatus: data.paymentStatus,
+      totalLabel: `${data.currency ?? context.currency} ${(
+        Number(data.totalMinor ?? 0) / 100
+      ).toFixed(0)}`,
       totalMinor: data.totalMinor ?? 0,
       currency: data.currency ?? context.currency,
       itemCount: (data.items ?? []).reduce(

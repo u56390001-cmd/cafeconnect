@@ -35,6 +35,7 @@ function quantityIsValid(qty: number): boolean {
 
 async function loadEligibleOffer(
   tenantId: string,
+  lineItems: Array<{ itemId: string; categoryId: string; unitPriceMinor: number; quantity: number }>,
   subtotalMinor: number
 ): Promise<{
   offerId: string;
@@ -55,17 +56,44 @@ async function loadEligibleOffer(
     if (start && start > now) continue;
     if (end && end < now) continue;
 
+    // Scoped offers (category / item scoped) only apply to the matching lines
+    // and the discount is calculated on the scoped subtotal.
+    const scopeCategoryIds: string[] = Array.isArray(d.scopeCategoryIds)
+      ? d.scopeCategoryIds
+      : [];
+    const scopeItemIds: string[] = Array.isArray(d.scopeItemIds)
+      ? d.scopeItemIds
+      : [];
+
+    const isScoped = scopeCategoryIds.length > 0 || scopeItemIds.length > 0;
+    const eligibleLines = isScoped
+      ? lineItems.filter(
+          (line) =>
+            (scopeCategoryIds.length === 0 ||
+              scopeCategoryIds.includes(line.categoryId)) &&
+            (scopeItemIds.length === 0 || scopeItemIds.includes(line.itemId))
+        )
+      : lineItems;
+
+    if (isScoped && eligibleLines.length === 0) continue;
+
+    const scopedSubtotal = eligibleLines.reduce(
+      (sum, line) => sum + line.unitPriceMinor * line.quantity,
+      0
+    );
+    const baseSubtotal = isScoped ? scopedSubtotal : subtotalMinor;
+
     const minOrder = Number(d.minOrderMinor ?? 0);
-    if (minOrder && subtotalMinor < minOrder) continue;
+    if (minOrder && baseSubtotal < minOrder) continue;
 
     let discount = 0;
     if (d.type === "percentage") {
-      discount = Math.round((subtotalMinor * Number(d.valuePct ?? 0)) / 100);
+      discount = Math.round((baseSubtotal * Number(d.valuePct ?? 0)) / 100);
     } else if (d.type === "fixedDiscount") {
-      discount = Math.min(Number(d.valueMinor ?? 0), subtotalMinor);
+      discount = Math.min(Number(d.valueMinor ?? 0), baseSubtotal);
     } else if (d.type === "freeDelivery") {
-      // treat free delivery as discount equal to delivery fee at checkout stage
-      discount = Number(d.deliveryFeeMinor ?? 0) || 0;
+      // handled by the delivery fee waiver in createOrder
+      discount = 0;
     }
 
     if (discount > (best?.discountMinor ?? 0)) {
@@ -74,6 +102,54 @@ async function loadEligibleOffer(
   }
 
   return best;
+}
+
+async function loadFreeDeliveryOffer(
+  tenantId: string,
+  lineItems: Array<{ itemId: string; categoryId: string; unitPriceMinor: number; quantity: number }>,
+  subtotalMinor: number
+): Promise<{ offerId: string; name: string } | null> {
+  const snap = await tenantCollection(tenantId, "offers")
+    .where("status", "==", "active")
+    .get();
+
+  const now = Date.now();
+  for (const doc of snap.docs) {
+    const d = doc.data();
+    if (d.type !== "freeDelivery") continue;
+    const start = d.startAt ? new Date(d.startAt as Date).getTime() : 0;
+    const end = d.endAt ? new Date(d.endAt as Date).getTime() : 0;
+    if (start && start > now) continue;
+    if (end && end < now) continue;
+
+    const scopeCategoryIds: string[] = Array.isArray(d.scopeCategoryIds)
+      ? d.scopeCategoryIds
+      : [];
+    const scopeItemIds: string[] = Array.isArray(d.scopeItemIds)
+      ? d.scopeItemIds
+      : [];
+    const isScoped = scopeCategoryIds.length > 0 || scopeItemIds.length > 0;
+    const eligibleLines = isScoped
+      ? lineItems.filter(
+          (line) =>
+            (scopeCategoryIds.length === 0 ||
+              scopeCategoryIds.includes(line.categoryId)) &&
+            (scopeItemIds.length === 0 || scopeItemIds.includes(line.itemId))
+        )
+      : lineItems;
+    if (isScoped && eligibleLines.length === 0) continue;
+
+    const baseSubtotal = eligibleLines.reduce(
+      (sum, line) => sum + line.unitPriceMinor * line.quantity,
+      0
+    );
+    const minOrder = Number(d.minOrderMinor ?? 0);
+    if (minOrder && baseSubtotal < minOrder) continue;
+
+    return { offerId: d.offerId || doc.id, name: d.name };
+  }
+
+  return null;
 }
 
 export async function createOrder(input: CreateOrderInput): Promise<{
@@ -137,8 +213,23 @@ export async function createOrder(input: CreateOrderInput): Promise<{
   };
 
   const snapshots: Array<Record<string, unknown>> = [];
-  for (const entry of input.items) {
-    const itemSnap = await tenantDoc(input.tenantId, "menuItems", entry.itemId).get();
+  const lineItems: Array<{
+    itemId: string;
+    categoryId: string;
+    unitPriceMinor: number;
+    quantity: number;
+  }> = [];
+
+  // Read the menu items in parallel (one round trip instead of N).
+  const itemSnaps = await Promise.all(
+    input.items.map((entry) =>
+      tenantDoc(input.tenantId, "menuItems", entry.itemId).get()
+    )
+  );
+
+  for (let index = 0; index < itemSnaps.length; index++) {
+    const itemSnap = itemSnaps[index];
+    const entry = input.items[index];
     if (!itemSnap.exists) throw new Error("Menu item not found");
     const d = itemSnap.data()!;
     if (d.publicationStatus !== "published") {
@@ -152,9 +243,16 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     snapshots.push({
       itemId: entry.itemId,
       name: d.name,
+      categoryId: d.categoryId ?? null,
       unitPriceMinor,
       quantity: entry.quantity,
       lineTotalMinor: unitPriceMinor * entry.quantity,
+    });
+    lineItems.push({
+      itemId: entry.itemId,
+      categoryId: String(d.categoryId ?? ""),
+      unitPriceMinor,
+      quantity: entry.quantity,
     });
   }
 
@@ -164,18 +262,37 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     deliveryFeeMinor = Number(settingsSnap.data()?.deliveryFeeMinor ?? 0);
   }
 
-  const offer = await loadEligibleOffer(input.tenantId, pricing.subtotalMinor);
+  const offer = await loadEligibleOffer(
+    input.tenantId,
+    lineItems,
+    pricing.subtotalMinor
+  );
   if (offer) {
     pricing.discountMinor = offer.discountMinor;
     pricing.appliedOfferName = offer.name;
   }
-  pricing.deliveryFeeMinor = deliveryFeeMinor;
+
+  // A free-delivery offer waives the delivery fee (never the item subtotal).
+  const freeDeliveryOffer = await loadFreeDeliveryOffer(
+    input.tenantId,
+    lineItems,
+    pricing.subtotalMinor
+  );
+  if (freeDeliveryOffer && input.fulfilmentType === "delivery") {
+    pricing.deliveryFeeMinor = 0;
+    pricing.appliedOfferName = pricing.appliedOfferName ?? freeDeliveryOffer.name;
+  } else {
+    pricing.deliveryFeeMinor = deliveryFeeMinor;
+  }
+
   pricing.totalMinor = Math.max(
     pricing.subtotalMinor - pricing.discountMinor + pricing.deliveryFeeMinor,
     0
   );
 
   const orderNumber = `TC-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${randomBytes(2).toString("hex").toUpperCase()}`;
+
+  const currency = await getCurrency(input.tenantId);
 
   await orderRef.set({
     orderId: docId,
@@ -189,7 +306,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     discountMinor: pricing.discountMinor,
     deliveryFeeMinor: pricing.deliveryFeeMinor,
     totalMinor: pricing.totalMinor,
-    currency: await getCurrency(input.tenantId),
+    currency,
     appliedOffer: pricing.appliedOfferName,
     customer: {
       name: input.customerName.trim(),
