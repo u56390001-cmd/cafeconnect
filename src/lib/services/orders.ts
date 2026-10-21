@@ -58,6 +58,8 @@ export interface CreateOrderInput {
   channel: string;
   /** Optional: avoids an extra read when the caller already knows it. */
   currency?: string;
+  /** Quotes may be produced before the customer gives an address. */
+  requireAddress?: boolean;
   /**
    * When true, the delivery-area rule is enforced against the tenant's
    * configured areas. When the tenant has no rule configured the order is
@@ -196,6 +198,8 @@ export async function quoteOrder(input: {
   fulfilmentType: "delivery" | "pickup";
   address?: string;
   currency?: string;
+  /** Quotes may be produced before the customer gives an address. */
+  requireAddress?: boolean;
 }): Promise<QuoteResult> {
   if (!Array.isArray(input.items) || input.items.length === 0) {
     throw new OrderError("INVALID_ORDER_ITEMS", "Invalid order items");
@@ -208,7 +212,7 @@ export async function quoteOrder(input: {
       throw new OrderError("INVALID_ITEM_ID", "Invalid item id");
     }
   }
-  if (input.fulfilmentType === "delivery") {
+  if (input.fulfilmentType === "delivery" && input.requireAddress !== false) {
     if (
       typeof input.address !== "string" ||
       input.address.trim().length < 8 ||
@@ -301,8 +305,12 @@ export async function quoteOrder(input: {
     const allowedAreas: string[] = Array.isArray(deliverySettings.allowedAreaKeywords)
       ? (deliverySettings.allowedAreaKeywords as string[])
       : [];
+    const hasAddress =
+      typeof input.address === "string" &&
+      input.address.trim().length >= 8 &&
+      input.address.length <= 300;
     const area = evaluateDeliveryArea(
-      input.address,
+      hasAddress ? input.address : undefined,
       allowedAreas,
       (deliverySettings.deliveryArea as string) || null
     );
@@ -496,7 +504,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
   ) {
     throw new OrderError("INVALID_CUSTOMER_PHONE", "Invalid customer phone");
   }
-  if (input.fulfilmentType === "delivery") {
+  if (input.fulfilmentType === "delivery" && input.requireAddress !== false) {
     if (
       typeof input.address !== "string" ||
       input.address.trim().length < 8 ||

@@ -358,6 +358,9 @@ export async function quoteCart(input: {
     fulfilmentType,
     address: fulfilmentType === "delivery" ? (cart.fulfilment?.address ?? undefined) : undefined,
     currency: input.currency,
+    // A quote is allowed before the address is known; the order submit still
+    // requires it.
+    requireAddress: false,
   });
 
   const money = (minor: number) => `${input.currency} ${(minor / 100).toFixed(0)}`;
