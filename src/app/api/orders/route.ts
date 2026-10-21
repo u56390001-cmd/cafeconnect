@@ -33,6 +33,35 @@ export async function GET(request: NextRequest): Promise<Response> {
       .limit(200)
       .get();
 
+    // Carts that are still in progress (customer is deciding or waiting for
+    // confirmation) so staff can follow up.
+    const cartsSnap = await tenantCollection(tenantId, "carts")
+      .where("status", "in", ["active", "awaiting_confirmation"])
+      .get();
+    const carts = cartsSnap.docs
+      .map((doc) => {
+        const d = doc.data();
+        return {
+          cartId: d.cartId || doc.id,
+          conversationId: d.conversationId,
+          channel: d.channel,
+          status: d.status,
+          items: d.items ?? [],
+          cartRevision: d.cartRevision ?? 0,
+          totalLabel: d.currentQuote?.totalLabel ?? null,
+          totalMinor: d.currentQuote?.totalMinor ?? null,
+          fulfilment: d.fulfilment ?? null,
+          customer: d.customer ?? null,
+          updatedAt: d.updatedAt,
+          expiresAt: d.expiresAt,
+        };
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt as Date).getTime() -
+          new Date(a.updatedAt as Date).getTime()
+      );
+
     const orders = snap.docs.map((doc) => {
       const d = doc.data();
       return {
@@ -55,7 +84,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       };
     });
 
-    return createApiResponse({ orders });
+    return createApiResponse({ orders, carts });
   } catch (error: unknown) {
     return handleApiError("api/orders", error);
   }

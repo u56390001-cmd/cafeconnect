@@ -32,6 +32,17 @@ interface Order {
   createdAt: string;
 }
 
+interface CartView {
+  cartId: string;
+  channel: string;
+  status: string;
+  items: Array<{ name: string; quantity: number }>;
+  cartRevision: number;
+  totalLabel: string | null;
+  customer: { name?: string | null; phone?: string | null } | null;
+  updatedAt: string;
+}
+
 const CHANNEL_LABEL: Record<string, string> = {
   web: "Website",
   whatsapp_qr: "WhatsApp",
@@ -65,6 +76,7 @@ function OrdersPage() {
   const { user } = useAuth();
   const tenantId = user?.tenantId;
   const [orders, setOrders] = useState<Order[]>([]);
+  const [carts, setCarts] = useState<CartView[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
 
@@ -76,6 +88,7 @@ function OrdersPage() {
       if (res.ok) {
         const data = await res.json();
         setOrders(data.data?.orders ?? []);
+        setCarts(data.data?.carts ?? []);
       }
     } finally {
       setLoading(false);
@@ -129,6 +142,40 @@ function OrdersPage() {
           </button>
         ))}
       </div>
+
+      {carts.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              In progress ({carts.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="divide-y">
+              {carts.map((cart) => (
+                <li key={cart.cartId} className="flex flex-wrap items-center gap-2 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">
+                      {cart.items.map((i) => `${i.quantity}x ${i.name}`).join(", ") ||
+                        "Empty cart"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {cart.customer?.name ?? "Guest"} ·{" "}
+                      {CHANNEL_LABEL[cart.channel] ?? cart.channel} · revision{" "}
+                      {cart.cartRevision} ·{" "}
+                      {new Date(cart.updatedAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <Badge variant="outline">{cart.status}</Badge>
+                  {cart.totalLabel && (
+                    <Badge variant="secondary">{cart.totalLabel}</Badge>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

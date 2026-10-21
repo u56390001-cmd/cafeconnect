@@ -36,11 +36,29 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const results = await drainInbox(20);
 
+    // Housekeeping: expire carts that were never confirmed.
+    let expiredCarts = 0;
+    try {
+      const { getAdminDb } = await import("@/lib/firebase/admin");
+      const { expireStaleCarts } = await import("@/lib/services/carts");
+      const tenantsSnap = await getAdminDb().collection("tenants").get();
+      for (const tenant of tenantsSnap.docs) {
+        expiredCarts += await expireStaleCarts(tenant.id);
+      }
+    } catch (error: unknown) {
+      console.error(
+        `[cron-error] scope=expireCarts message=${
+          error instanceof Error ? error.message.slice(0, 160) : "unknown"
+        }`
+      );
+    }
+
     return NextResponse.json({
       processed: results.length,
       sent: results.filter((r) => r.status === "sent").length,
       skipped: results.filter((r) => r.status === "skipped").length,
       failed: results.filter((r) => r.status === "failed").length,
+      expiredCarts,
       results,
     });
   } catch (error: unknown) {

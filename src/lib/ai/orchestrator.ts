@@ -6,6 +6,7 @@ import { loadTenantAiContext, type TenantAiContext } from "./context-builder";
 import { buildGroundedPrompt, PROMPT_VERSION, type PromptMessage } from "./prompt-builder";
 import { generateGeminiText, generateGeminiTextWithTools, generateGeminiTextWithToolsStream } from "./gemini-client";
 import { runTool, toolDeclarations, type ToolContext } from "./tools";
+import { cartIdForConversation, getCart } from "@/lib/services/carts";
 import { detectLanguage, stringsFor, type LanguageMode } from "./language";
 import {
   buildStateBlock,
@@ -18,6 +19,34 @@ import {
 } from "./conversation-state";
 
 export type ChatChannel = "web" | "whatsapp_meta" | "whatsapp_qr";
+
+/** Builds the cart layer that is injected into the prompt. */
+function buildCartSummary(
+  state: ConversationState,
+  cart: Awaited<ReturnType<typeof getCart>>
+): string {
+  if (!cart || !cart.items || cart.items.length === 0) {
+    return "Cart is empty (no items yet).";
+  }
+  const lines = cart.items.map((line) => `${line.quantity}x ${line.name}`);
+  const quote = cart.currentQuote;
+  return [
+    `Items: ${lines.join(", ")}`,
+    `Cart revision: ${cart.cartRevision}`,
+    quote
+      ? `Current quote (revision ${quote.revision}): ${quote.totalLabel}${
+          quote.appliedOffer ? ` (${quote.appliedOffer})` : ""
+        }`
+      : "No valid quote yet - call quote_order before confirming.",
+    `Fulfilment: ${cart.fulfilment?.type ?? "not set"}`,
+    `Customer: ${cart.customer?.name ?? "not given"} / ${
+      cart.customer?.phone ?? "no phone"
+    }`,
+    state.missingOrderDetails.length > 0
+      ? `Still needed: ${state.missingOrderDetails.join(", ")}`
+      : "All order details collected.",
+  ].join("\n");
+}
 
 /** Per-turn observability (blueprint §11.1). */
 export interface TurnMetrics {
@@ -237,13 +266,14 @@ export async function respondToCustomer(options: {
   // --- Conversation state layer (Phase 1) -----------------------------
   const persisted = (conversation ?? {}) as PersistedState;
   const historyTexts = history.map((h) => h.content);
+  const cart = await getCart(tenantId, cartIdForConversation(conversationId));
   const state: ConversationState = {
     activeIntent: deriveActiveIntent(message),
     missingOrderDetails: deriveMissingOrderDetails(message, historyTexts),
-    mentionedItems: [],
-    cartRevision: Number(persisted.cartRevision ?? 0),
-    lastVerifiedQuote: persisted.lastVerifiedQuote ?? null,
-    lastOrderNumber: persisted.lastOrderNumber ?? null,
+    mentionedItems: cart?.items.map((line) => line.name) ?? [],
+    cartRevision: Number(cart?.cartRevision ?? persisted.cartRevision ?? 0),
+    lastVerifiedQuote: cart?.currentQuote?.totalLabel ?? persisted.lastVerifiedQuote ?? null,
+    lastOrderNumber: cart?.lastOrderNumber ?? persisted.lastOrderNumber ?? null,
     handoffStatus: status,
     compactSummary: deriveCompactSummary(history),
     stateVersion: Number(persisted.stateVersion ?? 0) + 1,
@@ -264,6 +294,7 @@ export async function respondToCustomer(options: {
     languageMode,
     conversationStatus: status,
     stateSummary: buildStateBlock(state),
+    cartSummary: buildCartSummary(state, cart),
   });
   const promptReadyAt = Date.now();
 
@@ -295,6 +326,7 @@ export async function respondToCustomer(options: {
     customerReference,
     currency: context.currency,
     languageMode,
+    cartId: await resolveCartId(tenantId, conversationId, channel, customerReference),
   };
 
   let reply: string | undefined;
@@ -461,6 +493,23 @@ export async function respondToCustomer(options: {
     languageMode,
     requestId,
   };
+}
+
+/** Ensures the conversation has an active cart and returns its id. */
+async function resolveCartId(
+  tenantId: string,
+  conversationId: string,
+  channel: ChatChannel,
+  customerReference: string
+): Promise<string> {
+  const { ensureCart } = await import("@/lib/services/carts");
+  const cart = await ensureCart({
+    tenantId,
+    conversationId,
+    channel,
+    customerReference,
+  });
+  return cart.cartId;
 }
 
 /** Stores the per-turn metrics so they are observable in the dashboard. */

@@ -13,6 +13,8 @@ export interface PromptOptions {
   languageMode?: LanguageMode;
   conversationStatus?: string;
   stateSummary?: string;
+  /** Active cart summary (items, revision, current quote). */
+  cartSummary?: string;
 }
 
 export function buildGroundedPrompt(
@@ -81,6 +83,9 @@ export function buildGroundedPrompt(
   const stateBlock = options.stateSummary
     ? `--- CURRENT ORDER STATE ---\n${options.stateSummary}`
     : "";
+  const cartBlock = options.cartSummary
+    ? `--- ACTIVE CART ---\n${options.cartSummary}`
+    : "";
 
   // ---- Layer 1: core behaviour ----------------------------------------
   const core = `You are the AI assistant of "${context.businessName}", a food business.
@@ -107,18 +112,20 @@ Never switch script mid-reply. If you do not know a word in the customer's scrip
 
   // ---- Layer 6: tool contracts ----------------------------------------
   const toolContracts = `TOOLS
-- search_menu(query): find live items (also matches local aliases such as chai, zinger, roll, karahi, naan, paratha). Use it when the wording does not match a menu name exactly.
-- quote_order(items, fulfilmentType, address): authoritative price for a proposed order without placing it.
-- create_order(items, customerName, customerPhone, fulfilmentType, address): books a real order. Only call it when the customer has given the items, their name, their phone and (for delivery) the address, and has agreed to the order.
+- search_menu(query): find live items (also matches local aliases such as chai, zinger, roll, karahi). Use it when the wording does not match a menu name exactly.
+- update_cart(operation, items, fulfilmentType, address, customerName, customerPhone): change the customer's cart. operation = add / remove / set / clear. Corrections merge into the existing cart; they never create duplicate lines.
+- quote_order(): price the current cart (real prices, offers, delivery fee, minimum order, delivery area) without ordering.
+- create_order(customerName, customerPhone, address): place the order. Requires a fresh quote for the current cart revision and the customer's confirmation. Safe to retry - a repeat returns the same order.
 - get_order_status(orderNumber, customerPhone): status of an existing order; the phone must match the one used when ordering.
 - handoff_to_staff(reason, summary): pass the conversation to a human.
 
 ORDERING PROCEDURE
-1. Collect items (exact [itemId] values from the menu), quantity, customer name, customer phone (country code, digits only) and, for delivery, the full address. Ask for whatever is missing in one short message.
-2. Use quote_order to state the exact total, or create_order when the customer has confirmed.
-3. After create_order returns an order number, tell the customer: "Order #<number> received, total <totalLabel>" and that the team will confirm by phone.
-4. If a tool returns ok=false, use its customerMessage to explain what is missing. Never say the order is placed.
-5. If the tenant has no delivery-area rule configured, do not claim the address is deliverable - ask which area the customer is in or hand off.`;
+1. Collect the items (exact [itemId] values), quantity, customer name, customer phone (country code, digits only) and, for delivery, the full address. Ask for whatever is missing in ONE short message.
+2. Call update_cart with everything you have. The cart is the source of truth - never repeat items the customer already removed.
+3. Call quote_order and show the customer the exact total from the tool, then ask them to confirm.
+4. Only after the customer confirms, call create_order.
+5. If the customer changes the order, call update_cart again (this invalidates the old quote) and quote again before confirming.
+6. If a tool returns ok=false, use its customerMessage to explain what is missing or unavailable. Never say the order is placed without an order number from create_order.`;
 
   // ---- Layer 4: retrieved memory (Phase 3 placeholder) ---------------
   const memoryBlock =
@@ -147,6 +154,8 @@ ${knowledgeLines || "(no knowledge entries yet)"}
 ${memoryBlock}
 
 ${stateBlock}
+
+${cartBlock}
 
 ${toolContracts}
 
