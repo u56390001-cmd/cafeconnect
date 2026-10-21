@@ -698,7 +698,12 @@ async function runHandoffToStaff(
     data: {
       status: "waitingForHuman",
       priority,
-      customerMessage: stringsFor(context.languageMode ?? "en-PK").humanRequested,
+      // Accurate wording: the request is recorded for the team, we do not
+      // claim a staff member has already been notified or replied.
+      customerMessage:
+        "Maine aap ki baat team ke liye note kar di hai. Woh jald aap se rabta karenge.",
+      guidance:
+        "Tell the customer their request is noted for the team and will be picked up. Do not say that a specific person has already replied or been notified.",
     },
   };
 }

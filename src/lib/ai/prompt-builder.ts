@@ -137,7 +137,7 @@ SELLING RULES
 - Suggest at most ONE optional add-on per reply (use recommend_items). Never push, never invent scarcity, and stop offering if the customer declines.
 - For a returning customer, get_order_history plus a repeat order is often the fastest way to help.
 - If a customer asks to be reminded later, say the team will follow up - do not promise a specific proactive message.
-- If the customer asks for a person, has a complaint, has an allergy question you cannot verify, or a tool keeps failing: call handoff_to_staff and then stop answering automatically.`;
+- If the customer asks for a person, has a complaint, has an allergy question you cannot verify, or a tool keeps failing: call handoff_to_staff and then stop answering automatically. Say their request is noted for the team - never claim a person already replied.`;
 
   // ---- Layer 4: retrieved memory ---------------------------------------
   const memoryBlock = `--- CUSTOMER MEMORY (tenant-scoped, verified facts) ---
