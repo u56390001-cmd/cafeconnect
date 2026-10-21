@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   BookOpen,
   CalendarDays,
@@ -38,19 +39,14 @@ export default function DashboardLayout({
 }) {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
-  const [activePath, setActivePath] = useState<string>("");
 
   useEffect(() => {
     setMounted(true);
-    setActivePath(window.location.pathname);
   }, []);
 
-  useEffect(() => {
-    const handlePopState = () => setActivePath(window.location.pathname);
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  const activePath = mounted ? pathname : "";
 
   if (!mounted || loading) {
     return (
@@ -120,10 +116,10 @@ export default function DashboardLayout({
                     isActive && "font-medium"
                   )}
                 >
-                  <a href={item.href}>
+                  <Link href={item.href}>
                     <Icon data-icon="inline-start" />
                     {item.name}
-                  </a>
+                  </Link>
                 </Button>
               );
             })}

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, authFetch } from "@/context/AuthContext";
@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Empty } from "@/components/ui/empty";
+import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
 
 interface Offer {
   offerId: string;
@@ -152,7 +153,7 @@ function OffersPage() {
     if (res.ok) await load();
   }
 
-  if (!tenantId) return null;
+  if (!tenantId) return <NoTenantNotice />
 
   return (
     <div className="space-y-6">
@@ -278,9 +279,9 @@ function OffersPage() {
                   <div className="min-w-0 flex-1">
                     <p className="font-medium truncate">{offer.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {typeLabel[offer.type] ?? offer.type} · {valueSummary(offer)}
-                      {offer.minOrderMinor ? ` · min PKR ${Math.round(offer.minOrderMinor / 100)}` : ""}
-                      {offer.endAt ? ` · ends ${new Date(offer.endAt).toLocaleDateString()}` : ""}
+                      {typeLabel[offer.type] ?? offer.type} Â· {valueSummary(offer)}
+                      {offer.minOrderMinor ? ` Â· min PKR ${Math.round(offer.minOrderMinor / 100)}` : ""}
+                      {offer.endAt ? ` Â· ends ${new Date(offer.endAt).toLocaleDateString()}` : ""}
                     </p>
                   </div>
                   {statusBadge(offer)}
@@ -309,3 +310,5 @@ function OffersPage() {
 export default function Page() {
   return <OffersPage />;
 }
+
+

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, authFetch } from "@/context/AuthContext";
@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
+import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
 
 interface Conversation {
   conversationId: string;
@@ -95,7 +96,7 @@ function ChatsPage() {
     }
   }
 
-  if (!tenantId) return null;
+  if (!tenantId) return <NoTenantNotice />
 
   const selectedConversation = conversations.find((c) => c.conversationId === selected);
 
@@ -130,11 +131,11 @@ function ChatsPage() {
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">
-                        {c.customerReference?.replace(/^web:/, "Guest ") ?? "Guest"} ·{" "}
+                        {c.customerReference?.replace(/^web:/, "Guest ") ?? "Guest"} Â·{" "}
                         <span className="text-muted-foreground">{c.channel === "web" ? "Website" : c.channel}</span>
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {c.messageCount} messages ·{" "}
+                        {c.messageCount} messages Â·{" "}
                         {new Date(c.lastMessageAt).toLocaleString()}
                       </p>
                     </div>
@@ -204,7 +205,7 @@ function ChatsPage() {
                     {m.content}
                   </div>
                   <p className="px-1 pt-0.5 text-[10px] text-muted-foreground">
-                    {m.senderType} · {new Date(m.createdAt).toLocaleTimeString()}
+                    {m.senderType} Â· {new Date(m.createdAt).toLocaleTimeString()}
                   </p>
                 </div>
               ))}
@@ -219,3 +220,5 @@ function ChatsPage() {
 export default function Page() {
   return <ChatsPage />;
 }
+
+

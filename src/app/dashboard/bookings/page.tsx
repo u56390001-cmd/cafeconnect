@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, authFetch } from "@/context/AuthContext";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
+import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
 
 interface Booking {
   bookingId: string;
@@ -100,7 +101,7 @@ function BookingsPage() {
     }
   }
 
-  if (!tenantId) return null;
+  if (!tenantId) return <NoTenantNotice />
 
   return (
     <div className="space-y-6">
@@ -210,8 +211,8 @@ function BookingsPage() {
                       </span>
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {b.date} at {b.time} · {b.phone}
-                      {b.notes ? ` · ${b.notes}` : ""}
+                      {b.date} at {b.time} Â· {b.phone}
+                      {b.notes ? ` Â· ${b.notes}` : ""}
                     </p>
                   </div>
                   <Badge variant="secondary" className={statusBadge[b.status]}>
@@ -245,3 +246,5 @@ function BookingsPage() {
 export default function Page() {
   return <BookingsPage />;
 }
+
+

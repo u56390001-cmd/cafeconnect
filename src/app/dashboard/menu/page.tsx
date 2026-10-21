@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Empty } from "@/components/ui/empty";
+import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
 
 interface Category {
   categoryId: string;
@@ -171,7 +172,7 @@ function MenuPage() {
     });
   }
 
-  if (!tenantId) return null;
+  if (!tenantId) return <NoTenantNotice />;
 
   return (
     <div className="space-y-6">

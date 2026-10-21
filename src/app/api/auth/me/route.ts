@@ -5,6 +5,54 @@ import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+async function provisionTenant(
+  uid: string,
+  email: string | null,
+  displayName: string | null
+): Promise<{ tenantId: string; role: string }> {
+  const db = getAdminDb();
+  const tenantRef = db.collection("tenants").doc();
+  const tenantId = tenantRef.id;
+  const now = new Date();
+
+  await tenantRef.set({
+    tenantId,
+    businessType: [],
+    status: "pending_setup",
+    ownerUserId: uid,
+    country: "PK",
+    currency: "PKR",
+    timezone: "Asia/Karachi",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await tenantRef.collection("members").doc(uid).set({
+    membershipId: uid,
+    tenantId,
+    userId: uid,
+    role: "owner",
+    status: "active",
+    createdAt: now,
+  });
+
+  await db.collection("users").doc(uid).set(
+    {
+      userId: uid,
+      email,
+      displayName,
+      photoURL: null,
+      tenantId,
+      role: "owner",
+      updatedAt: now,
+      createdAt: now,
+    },
+    { merge: true }
+  );
+
+  return { tenantId, role: "owner" };
+}
+
 export async function GET(request: NextRequest): Promise<Response> {
   try {
     const session = await getSession(request);
@@ -45,6 +93,16 @@ export async function GET(request: NextRequest): Promise<Response> {
           queryError instanceof Error ? queryError.message : queryError
         );
       }
+    }
+
+    if (!tenantId) {
+      const provisioned = await provisionTenant(
+        session.uid,
+        userRecord.email ?? null,
+        userRecord.displayName ?? null
+      );
+      tenantId = provisioned.tenantId;
+      role = provisioned.role;
     }
 
     return createApiResponse({

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
+import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
 
 interface OrderItem {
   itemId: string;
@@ -94,7 +95,7 @@ function OrdersPage() {
     return orders.filter((o) => o.status === filter);
   }, [orders, filter, tenantId]);
 
-  if (!tenantId) return null;
+  if (!tenantId) return <NoTenantNotice />;
 
   return (
     <div className="space-y-6">
