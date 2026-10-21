@@ -11,3 +11,6 @@ build/
 *.tsbuildinfo
 .DS_Store
 .env*.local
+
+# Local provider documentation (contains live tokens)
+my whatsapp docs.txt
