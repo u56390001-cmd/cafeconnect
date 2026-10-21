@@ -38,14 +38,44 @@ async function processQrEvent(event: InboxEvent): Promise<ProcessResult> {
     return { eventId: event.eventId, status: "failed", reason: "no_provider_token" };
   }
 
-  const reply = await respondToCustomer({
-    tenantId: event.tenantId,
-    channel: "whatsapp_qr",
-    message: event.text,
-    customerReference: event.customerReference,
-  });
+  const customerReference = event.customerReference;
 
-  await sendQrText(providerToken, event.customerReference, reply.reply);
+  // If the AI takes too long, acknowledge first so the customer is not left
+  // staring at silence (the real reply follows once the AI is done).
+  let acknowledged = false;
+  const ackTimer = setTimeout(() => {
+    void (async () => {
+      try {
+        await sendQrText(
+          providerToken,
+          customerReference,
+          "Ji, aapka message mil gaya hai. Main abhi check kar raha hoon, thori der mein jawab de doonga."
+        );
+        acknowledged = true;
+      } catch {
+        // ignore acknowledgement failures
+      }
+    })();
+  }, 5_000);
+
+  let reply: Awaited<ReturnType<typeof respondToCustomer>>;
+  try {
+    reply = await respondToCustomer({
+      tenantId: event.tenantId,
+      channel: "whatsapp_qr",
+      message: event.text,
+      customerReference: event.customerReference,
+    });
+  } finally {
+    clearTimeout(ackTimer);
+  }
+
+  await sendQrText(providerToken, customerReference, reply.reply);
+  if (acknowledged) {
+    console.log(
+      `[whatsapp-worker] tenant=${event.tenantId} event=${event.eventId} acknowledged=true`
+    );
+  }
 
   await markInboxEvent(event.tenantId, event.eventId, {
     status: "sent",
