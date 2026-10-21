@@ -143,7 +143,7 @@ export async function sendQrText(
 export async function registerQrWebhook(
   token: string,
   url: string
-): Promise<void> {
+): Promise<{ secret: string | null; url: string }> {
   let res: Response;
   try {
     res = await providerFetch(
@@ -157,6 +157,15 @@ export async function registerQrWebhook(
   if (!res.ok) {
     throw new QrProviderError("Failed to register QR provider webhook", 502);
   }
+
+  const data = (await res.json().catch(() => ({}))) as {
+    webhook?: { url?: string; secret?: string };
+  };
+
+  return {
+    secret: data.webhook?.secret ?? null,
+    url: data.webhook?.url ?? url,
+  };
 }
 
 export function normalizePhone(phone: string): string {

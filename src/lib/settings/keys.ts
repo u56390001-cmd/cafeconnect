@@ -22,7 +22,7 @@ export async function getTenantApiKey(
   const snapshot = await db
     .collection(`tenants/${tenantId}/apiKeys`)
     .where("provider", "==", provider)
-    .where("status", "==", "active")
+    .where("status", "in", ["active", "pending_validation"])
     .limit(1)
     .get();
 

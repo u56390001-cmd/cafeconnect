@@ -18,6 +18,16 @@ async function validateGeminiKey(keyValue: string): Promise<boolean> {
   return response.ok;
 }
 
+async function validateQrProviderKey(keyValue: string): Promise<boolean> {
+  try {
+    const { getQrSession } = await import("@/lib/whatsapp/qr-provider");
+    const session = await getQrSession(keyValue.trim());
+    return session.status !== "error";
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest): Promise<Response> {
   try {
     const session = await getSession(request);
@@ -57,6 +67,20 @@ export async function POST(request: NextRequest): Promise<Response> {
           status = "active";
         } else {
           validationNote = "Key saved but could not be validated";
+        }
+      } catch {
+        validationNote = "Key saved; validation skipped (network issue)";
+      }
+    }
+
+    if (provider === "qr_provider") {
+      try {
+        const valid = await validateQrProviderKey(keyValue);
+        if (valid) {
+          status = "active";
+        } else {
+          validationNote =
+            "Key saved but the provider did not confirm it. You can retry from the WhatsApp card.";
         }
       } catch {
         validationNote = "Key saved; validation skipped (network issue)";

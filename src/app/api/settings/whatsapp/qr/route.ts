@@ -9,6 +9,7 @@ import {
   startQrTrial,
   stopQrTrial,
   webhookPublicUrl,
+  hasTenantProviderKey,
 } from "@/lib/whatsapp/qr-trial";
 
 export const dynamic = "force-dynamic";
@@ -24,9 +25,11 @@ export async function GET(request: NextRequest): Promise<Response> {
     await requireTenantScope(tenantId, session.uid, "manage");
 
     const state = await readQrTrialState(tenantId);
+    const tenantKey = await hasTenantProviderKey(tenantId);
 
     return createApiResponse({
       providerConfigured: qrProviderConfigured(),
+      usingTenantKey: tenantKey,
       state,
       webhookUrl: qrProviderConfigured() ? webhookPublicUrl() : null,
     });

@@ -1,5 +1,8 @@
 import { getAdminDb } from "@/lib/firebase/admin";
 import { tenantDoc } from "@/lib/tenancy/resolver";
+import { getTenantApiKey } from "@/lib/settings/keys";
+import { encrypt, decrypt } from "@/lib/security/encryption";
+import { randomBytes } from "crypto";
 import {
   getQrSession,
   registerQrWebhook,
@@ -38,11 +41,26 @@ function providerToken(): string {
   return token;
 }
 
+/**
+ * Provider credential for a tenant:
+ * 1) the tenant's own provider API key (saved in Settings, encrypted at rest)
+ * 2) the platform fallback token (demo / single shared session)
+ */
+export async function tenantProviderToken(tenantId: string): Promise<string> {
+  const tenantKey = await getTenantApiKey(tenantId, "qr_provider");
+  if (tenantKey?.key) return tenantKey.key.trim();
+  return providerToken();
+}
+
+export function hasTenantProviderKey(tenantId: string): Promise<boolean> {
+  return getTenantApiKey(tenantId, "qr_provider").then((k) => Boolean(k?.key));
+}
+
 export function qrProviderConfigured(): boolean {
   return Boolean(process.env.QR_PROVIDER_BASE_URL && process.env.QR_PROVIDER_API_KEY);
 }
 
-export function webhookPublicUrl(): string {
+export function webhookPublicUrl(webhookToken?: string): string {
   const base = (
     process.env.NEXT_PUBLIC_APP_URL ||
     process.env.QR_PROVIDER_WEBHOOK_BASE_URL ||
@@ -51,7 +69,74 @@ export function webhookPublicUrl(): string {
   if (!base) {
     throw new Error("Missing NEXT_PUBLIC_APP_URL for webhook registration");
   }
-  return `${base.replace(/\/+$/, "")}/api/webhooks/whatsapp/qr`;
+  const root = base.replace(/\/+$/, "");
+  return webhookToken
+    ? `${root}/api/webhooks/whatsapp/qr/${webhookToken}`
+    : `${root}/api/webhooks/whatsapp/qr`;
+}
+
+async function ensureWebhookToken(tenantId: string): Promise<string> {
+  const snap = await tenantDoc(tenantId, "settings", "whatsapp").get();
+  const existing = snap.data()?.qrWebhookToken as string | undefined;
+  if (existing) return existing;
+
+  const webhookToken = randomBytes(24).toString("hex");
+  await tenantDoc(tenantId, "settings", "whatsapp").set(
+    { tenantId, qrWebhookToken: webhookToken, updatedAt: new Date() },
+    { merge: true }
+  );
+  return webhookToken;
+}
+
+export async function resolveTenantByWebhookToken(
+  webhookToken: string
+): Promise<string | null> {
+  if (!webhookToken) return null;
+  const snap = await getAdminDb()
+    .collectionGroup("whatsapp")
+    .where("qrWebhookToken", "==", webhookToken)
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  return (snap.docs[0].data()?.tenantId as string) ?? null;
+}
+
+export async function getTenantWebhookSecret(
+  tenantId: string
+): Promise<string | null> {
+  const snap = await tenantDoc(tenantId, "settings", "whatsapp").get();
+  const encryptedSecret = snap.data()?.qrWebhookSecret as
+    | { ciphertext: string; nonceOrIv: string; authTag: string; keyVersion: number; salt: string }
+    | undefined;
+  if (!encryptedSecret) return null;
+
+  const encryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+  if (!encryptionKey) return null;
+
+  try {
+    return await decrypt(encryptedSecret, encryptionKey);
+  } catch {
+    return null;
+  }
+}
+
+async function storeTenantWebhookSecret(
+  tenantId: string,
+  secret: string
+): Promise<void> {
+  const encryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    throw new Error("Missing SECRET_ENCRYPTION_KEY - refusing to store secret");
+  }
+  const encrypted = await encrypt(secret, encryptionKey, 1);
+  await tenantDoc(tenantId, "settings", "whatsapp").set(
+    {
+      tenantId,
+      qrWebhookSecret: encrypted,
+      updatedAt: new Date(),
+    },
+    { merge: true }
+  );
 }
 
 export async function readQrTrialState(tenantId: string): Promise<QrTrialState> {
@@ -77,9 +162,10 @@ export async function startQrTrial(
   tenantId: string,
   userId: string
 ): Promise<QrTrialState> {
-  const token = providerToken();
+  const token = await tenantProviderToken(tenantId);
   const now = new Date();
   const endsAt = new Date(now.getTime() + QR_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+  const webhookToken = await ensureWebhookToken(tenantId);
 
   const state: QrTrialState = {
     status: "pending_scan",
@@ -107,7 +193,13 @@ export async function startQrTrial(
     { merge: true }
   );
 
-  await registerQrWebhook(token, webhookPublicUrl());
+  const registered = await registerQrWebhook(
+    token,
+    webhookPublicUrl(webhookToken)
+  );
+  if (registered.secret) {
+    await storeTenantWebhookSecret(tenantId, registered.secret);
+  }
 
   return state;
 }
@@ -115,7 +207,7 @@ export async function startQrTrial(
 export async function refreshQrTrialConnection(
   tenantId: string
 ): Promise<QrTrialState> {
-  const token = providerToken();
+  const token = await tenantProviderToken(tenantId);
   const current = await readQrTrialState(tenantId);
   const now = new Date();
 

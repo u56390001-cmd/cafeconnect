@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { QrCode, RefreshCw, ShieldAlert, Square } from "lucide-react";
+import { KeyRound, QrCode, RefreshCw, ShieldAlert, Square } from "lucide-react";
 import { authFetch } from "@/context/AuthContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -56,22 +58,36 @@ export function QrTrialCard({ tenantId }: { tenantId: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [providerKey, setProviderKey] = useState("");
+  const [savedKeyHint, setSavedKeyHint] = useState<string | null>(null);
+  const [keyMessage, setKeyMessage] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await authFetch(
-        `/api/settings/whatsapp/qr?tenantId=${encodeURIComponent(tenantId)}`
-      );
-      if (!res.ok) {
+      const [qrRes, keysRes] = await Promise.all([
+        authFetch(
+          `/api/settings/whatsapp/qr?tenantId=${encodeURIComponent(tenantId)}`
+        ),
+        authFetch(`/api/settings/ai-key?tenantId=${encodeURIComponent(tenantId)}`),
+      ]);
+      if (!qrRes.ok) {
         setError("Failed to load QR trial state");
         return;
       }
-      const payload = (await res.json()) as QrTrialResponse;
+      const payload = (await qrRes.json()) as QrTrialResponse;
       setState(payload.data.state);
       setProviderConfigured(payload.data.providerConfigured);
       setWebhookUrl(payload.data.webhookUrl);
+
+      if (keysRes.ok) {
+        const keysPayload = (await keysRes.json()) as {
+          data: { keys: Array<{ provider: string; maskedHint: string }> };
+        };
+        const qrKey = keysPayload.data.keys.find((k) => k.provider === "qr_provider");
+        setSavedKeyHint(qrKey?.maskedHint ?? null);
+      }
     } finally {
       setLoading(false);
     }
@@ -98,6 +114,39 @@ export function QrTrialCard({ tenantId }: { tenantId: string }) {
         return;
       }
       if (payload?.data?.state) setState(payload.data.state);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveProviderKey(e: React.FormEvent) {
+    e.preventDefault();
+    if (!providerKey.trim()) return;
+    setBusy(true);
+    setKeyMessage("");
+    try {
+      const res = await authFetch("/api/settings/ai-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          provider: "qr_provider",
+          keyValue: providerKey.trim(),
+        }),
+      });
+      const payload = (await res.json().catch(() => null)) as {
+        data?: { maskedHint?: string };
+        error?: { message?: string };
+      } | null;
+      if (!res.ok) {
+        setKeyMessage(payload?.error?.message ?? "Failed to save provider key");
+        return;
+      }
+      setProviderKey("");
+      setKeyMessage(
+        `Provider key saved (${payload?.data?.maskedHint ?? "stored"}). It is encrypted at rest and never shown again.`
+      );
+      await load();
     } finally {
       setBusy(false);
     }
@@ -160,6 +209,41 @@ export function QrTrialCard({ tenantId }: { tenantId: string }) {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+
+            <form onSubmit={saveProviderKey} className="rounded-lg border border-border p-4">
+              <div className="flex items-start gap-3">
+                <KeyRound className="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
+                <div className="flex-1 space-y-3">
+                  <div>
+                    <Label htmlFor="qrProviderKey">
+                      Your WhatsApp provider API key
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {savedKeyHint
+                        ? `Saved key: ${savedKeyHint}. Paste a new key to replace it.`
+                        : "Get your key from the WhatsApp provider dashboard, then paste it here to connect your own number."}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Input
+                      id="qrProviderKey"
+                      type="password"
+                      autoComplete="off"
+                      placeholder="wa.0.xxxxx"
+                      value={providerKey}
+                      onChange={(e) => setProviderKey(e.target.value)}
+                      className="max-w-xs"
+                    />
+                    <Button type="submit" variant="outline" disabled={busy || !providerKey.trim()}>
+                      Save key
+                    </Button>
+                  </div>
+                  {keyMessage && (
+                    <p className="text-xs text-muted-foreground">{keyMessage}</p>
+                  )}
+                </div>
+              </div>
+            </form>
 
             {state?.status === "pending_scan" && (
               <Alert>
