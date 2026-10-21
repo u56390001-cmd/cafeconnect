@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { handleApiError } from "@/lib/api/response";
 import {
   normalizeInboundMessages,
-  sendMetaText,
   verifyMetaSignature,
 } from "@/lib/whatsapp/meta-cloud";
 import { resolveTenantByMetaPhoneNumberId } from "@/lib/whatsapp/mapping";
-import { getTenantApiKey } from "@/lib/settings/keys";
-import { respondToCustomer } from "@/lib/ai/orchestrator";
-import { tenantDoc } from "@/lib/tenancy/resolver";
+import { enqueueInboxEvent } from "@/lib/whatsapp/inbox";
+import { processInboxEvent } from "@/lib/whatsapp/worker";
 
 export const dynamic = "force-dynamic";
 
@@ -50,18 +49,12 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     const db = getAdminDb();
+    const background: Array<() => Promise<unknown>> = [];
 
     for (const message of messages) {
       const dedupeRef = db.collection("whatsappEventLog").doc(message.messageId);
       const dedupeSnap = await dedupeRef.get();
       if (dedupeSnap.exists) continue;
-      await dedupeRef.set({
-        eventId: message.messageId,
-        channel: "whatsapp_meta",
-        receivedAt: new Date(),
-        from: message.from,
-        phoneNumberId: message.phoneNumberId,
-      });
 
       const tenantId = await resolveTenantByMetaPhoneNumberId(
         message.phoneNumberId
@@ -71,30 +64,34 @@ export async function POST(request: NextRequest): Promise<Response> {
       const text = message.text?.trim();
       if (!text) continue;
 
-      const accessToken =
-        (await getTenantApiKey(tenantId, "meta_whatsapp"))?.key ??
-        process.env.WHATSAPP_ACCESS_TOKEN;
-      if (!accessToken) continue;
+      await dedupeRef.set({
+        eventId: message.messageId,
+        channel: "whatsapp_meta",
+        tenantId,
+        receivedAt: new Date(),
+        from: message.from,
+        phoneNumberId: message.phoneNumberId,
+      });
 
-      const settingsSnap = await tenantDoc(tenantId, "settings", "whatsapp").get();
-      const phoneNumberId =
-        (settingsSnap.data()?.phoneNumberId as string | undefined) ??
-        message.phoneNumberId;
-      if (!phoneNumberId) continue;
-
-      const reply = await respondToCustomer({
+      await enqueueInboxEvent({
+        eventId: message.messageId,
         tenantId,
         channel: "whatsapp_meta",
-        message: text,
         customerReference: message.from,
+        text,
+        providerEvent: message as unknown as Record<string, unknown>,
       });
 
-      await sendMetaText({
-        accessToken,
-        phoneNumberId,
-        to: message.from,
-        text: reply.reply,
-      });
+      background.push(() => processInboxEvent(tenantId, message.messageId));
+    }
+
+    // Meta expects a fast 2xx; the AI reply and send happen in the background.
+    for (const task of background) {
+      try {
+        waitUntil(task().catch(() => undefined));
+      } catch {
+        void task().catch(() => undefined);
+      }
     }
 
     return NextResponse.json({ received: true }, { status: 200 });

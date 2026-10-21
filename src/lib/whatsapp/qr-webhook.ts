@@ -1,20 +1,16 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getAdminDb } from "@/lib/firebase/admin";
 import {
   checkTrialAllowed,
-  recordTrialUsage,
   resolveTenantByPhone,
   resolveTenantByWebhookToken,
   getTenantWebhookSecret,
 } from "@/lib/whatsapp/qr-trial";
-import {
-  sendQrText,
-  normalizePhone,
-  type QrWebhookEvent,
-} from "@/lib/whatsapp/qr-provider";
-import { respondToCustomer } from "@/lib/ai/orchestrator";
-import { getTenantApiKey } from "@/lib/settings/keys";
+import { normalizePhone, type QrWebhookEvent } from "@/lib/whatsapp/qr-provider";
+import { enqueueInboxEvent } from "@/lib/whatsapp/inbox";
+import { processInboxEvent } from "@/lib/whatsapp/worker";
 
 function verifySignature(
   rawBody: string,
@@ -29,6 +25,13 @@ function verifySignature(
   return timingSafeEqual(a, b);
 }
 
+/**
+ * Handles an inbound QR-provider webhook.
+ *
+ * The provider expects a 2xx within ~10 seconds, so we verify, deduplicate and
+ * enqueue the event and answer immediately. The AI reply and the WhatsApp send
+ * happen in the background (and are retried by the cron worker if needed).
+ */
 export async function handleQrWebhook(
   request: NextRequest,
   webhookToken: string | null
@@ -43,9 +46,6 @@ export async function handleQrWebhook(
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
 
-  // Resolve the tenant from the per-tenant webhook path token (never from
-  // client-supplied payload fields), then verify the provider signature with
-  // that tenant's stored secret.
   let tenantId = webhookToken
     ? await resolveTenantByWebhookToken(webhookToken)
     : null;
@@ -108,26 +108,30 @@ export async function handleQrWebhook(
 
   const customerReference = normalizePhone(event.from ?? "");
 
-  const reply = await respondToCustomer({
+  await enqueueInboxEvent({
+    eventId: event.id,
     tenantId,
     channel: "whatsapp_qr",
-    message: incomingText,
     customerReference,
+    text: incomingText,
+    providerEvent: event as unknown as Record<string, unknown>,
   });
 
-  const providerToken =
-    (await getTenantApiKey(tenantId, "qr_provider"))?.key ??
-    process.env.QR_PROVIDER_API_KEY?.trim();
+  // Answer the provider immediately; process the reply in the background.
+  scheduleBackground(() => processInboxEvent(tenantId as string, event.id));
 
-  if (!providerToken) {
-    return NextResponse.json(
-      { received: true, sent: false, reason: "no_provider_token" },
-      { status: 200 }
-    );
+  return NextResponse.json({ received: true, queued: true }, { status: 200 });
+}
+
+/**
+ * Registers background work with the platform runtime so the function stays
+ * alive after the response is sent. The cron worker retries anything that is
+ * still pending.
+ */
+function scheduleBackground(task: () => Promise<unknown>): void {
+  try {
+    waitUntil(task().catch(() => undefined));
+  } catch {
+    void task().catch(() => undefined);
   }
-
-  await sendQrText(providerToken, customerReference, reply.reply);
-  await recordTrialUsage(tenantId);
-
-  return NextResponse.json({ received: true, sent: true }, { status: 200 });
 }
