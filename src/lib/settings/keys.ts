@@ -19,16 +19,23 @@ export async function getTenantApiKey(
   }
 
   const db = getAdminDb();
+  // Single-field query on purpose: a composite index on (provider, status)
+  // is not guaranteed to exist on every project.
   const snapshot = await db
     .collection(`tenants/${tenantId}/apiKeys`)
     .where("provider", "==", provider)
-    .where("status", "in", ["active", "pending_validation"])
-    .limit(1)
+    .limit(5)
     .get();
 
   if (snapshot.empty) return null;
 
-  const doc = snapshot.docs[0];
+  const usable = snapshot.docs.find((doc) => {
+    const status = doc.data().status;
+    return status === "active" || status === "pending_validation";
+  });
+  if (!usable) return null;
+
+  const doc = usable;
   const data = doc.data();
   if (!data.ciphertext || !data.keyVersion) return null;
 

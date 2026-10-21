@@ -75,15 +75,20 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     if (!tenantId) {
       try {
+        // Single-field query on purpose: a composite index on
+        // (userId, status) is not guaranteed to exist on every project.
         const membershipSnap = await getAdminDb()
           .collectionGroup("members")
           .where("userId", "==", session.uid)
-          .where("status", "==", "active")
-          .limit(1)
+          .limit(5)
           .get();
 
-        if (!membershipSnap.empty) {
-          const membership = membershipSnap.docs[0].data();
+        const activeMembership = membershipSnap.docs.find(
+          (doc) => doc.data().status === "active"
+        );
+
+        if (activeMembership) {
+          const membership = activeMembership.data();
           tenantId = membership.tenantId || null;
           role = membership.role || null;
         }

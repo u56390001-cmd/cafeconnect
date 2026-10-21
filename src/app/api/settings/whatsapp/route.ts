@@ -28,12 +28,17 @@ export async function POST(request: NextRequest): Promise<Response> {
     const existing = await getAdminDb()
       .collection(`tenants/${ctx.tenantId}/apiKeys`)
       .where("provider", "==", provider)
-      .where("status", "in", ["active", "pending_validation"])
-      .limit(1)
+      .limit(5)
       .get();
 
-    if (!existing.empty) {
-      await existing.docs[0].ref.update({
+    // Single-field query above avoids a composite index on (provider, status).
+    const usable = existing.docs.find((doc) => {
+      const status = doc.data().status;
+      return status === "active" || status === "pending_validation";
+    });
+
+    if (usable) {
+      await usable.ref.update({
         status: "active",
         updatedAt: new Date(),
       });
@@ -44,7 +49,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         tenantId: ctx.tenantId,
         mode,
         provider,
-        status: existing.empty ? "not_configured" : "active",
+        status: usable ? "active" : "not_configured",
         updatedAt: new Date(),
       },
       { merge: true }
@@ -53,7 +58,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return createApiResponse({
       mode,
       provider,
-      status: existing.empty ? "not_configured" : "active",
+      status: usable ? "active" : "not_configured",
     });
   } catch (error: unknown) {
     return handleApiError("api/settings/whatsapp", error);
