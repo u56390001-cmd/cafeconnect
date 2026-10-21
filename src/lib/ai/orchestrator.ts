@@ -51,6 +51,21 @@ export async function ensureConversation(
   return ref.id;
 }
 
+/**
+ * Deterministic conversation id per WhatsApp customer so the agent keeps the
+ * conversation history across multiple messages (web chat keeps per-session ids).
+ */
+export function whatsappConversationId(
+  channel: ChatChannel,
+  customerReference: string
+): string | undefined {
+  if (channel === "web") return undefined;
+  const safeRef = customerReference.replace(/[^0-9a-zA-Z]/g, "").slice(0, 32);
+  if (!safeRef) return undefined;
+  const prefix = channel === "whatsapp_qr" ? "wa_qr" : "wa_meta";
+  return `${prefix}_${safeRef}`;
+}
+
 export async function addMessage(
   tenantId: string,
   conversationId: string,
@@ -135,7 +150,7 @@ export async function respondToCustomer(options: {
 
   const conversationId = await ensureConversation(
     tenantId,
-    options.conversationId,
+    options.conversationId ?? whatsappConversationId(channel, customerReference),
     channel,
     customerReference
   );
