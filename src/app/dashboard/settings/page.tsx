@@ -12,6 +12,7 @@ import {
 import { WidgetEmbedCard } from "@/components/settings/WidgetEmbedCard";
 import { QrTrialCard } from "@/components/settings/QrTrialCard";
 import { BusinessProfileCard } from "@/components/settings/BusinessProfileCard";
+import { MetaChannelCard } from "@/components/settings/MetaChannelCard";
 
 interface ApiKeySummary {
   keyId: string;
@@ -219,22 +220,25 @@ export default function SettingsPage() {
         {whatsappMode === "qr_trial" ? (
           <QrTrialCard tenantId={tenantId} />
         ) : (
-          <ApiKeyCard
-            title="WhatsApp Credential"
-            description="Meta WhatsApp Cloud API access token for this tenant."
-            provider="meta_whatsapp"
-            status={
-              whatsappStatus === "connected"
-                ? "connected"
-                : whatsappStatus === "not_configured"
-                ? "not_configured"
-                : "pending_validation"
-            }
-            placeholder="EAAG..."
-            loading={loading}
-            footnote="Tenant-owned credential. Platform-owned trial credentials are never exposed here."
-            onSave={(value) => saveKey("meta_whatsapp", value)}
-          />
+          <>
+            <MetaChannelCard tenantId={tenantId} />
+            <ApiKeyCard
+              title="WhatsApp Credential"
+              description="Meta WhatsApp Cloud API access token for this tenant."
+              provider="meta_whatsapp"
+              status={
+                whatsappStatus === "connected"
+                  ? "connected"
+                  : whatsappStatus === "not_configured"
+                  ? "not_configured"
+                  : "pending_validation"
+              }
+              placeholder="EAAG..."
+              loading={loading}
+              footnote="Tenant-owned credential. Platform-owned trial credentials are never exposed here."
+              onSave={(value) => saveKey("meta_whatsapp", value)}
+            />
+          </>
         )}
 
         <WidgetEmbedCard tenantId={tenantId} />
