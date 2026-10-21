@@ -1,13 +1,38 @@
-﻿import { GoogleGenerativeAI, type FunctionDeclaration } from "@google/generative-ai";
-import { runTool, type ToolContext } from "./tools";
-
-const clients = new Map<string, GoogleGenerativeAI>();
+﻿import { runTool, type ToolContext } from "./tools";
 
 /**
- * Ordered model candidates. The first one is the tenant's configured model;
- * the rest are safety nets so a degraded/rate-limited model never blocks a
- * customer reply.
+ * Gemini client built on the REST API (v1beta).
+ *
+ * Why REST and not the SDK: the current Gemini API rejects the legacy
+ * "function" role that the SDK sends for tool results, and it requires the
+ * thought signature to be echoed back with the function call. Using REST gives
+ * us exact control over the payload and over streaming.
  */
+
+const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+
+export interface RestPart {
+  text?: string;
+  functionCall?: {
+    name: string;
+    args: Record<string, unknown>;
+    id?: string;
+  };
+  thoughtSignature?: string;
+}
+
+export interface RestContent {
+  role: "user" | "model";
+  parts: RestPart[];
+}
+
+export class GeminiUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GeminiUnavailableError";
+  }
+}
+
 export function modelCandidates(): string[] {
   const configured = process.env.GEMINI_MODEL?.trim();
   const list = [
@@ -19,13 +44,13 @@ export function modelCandidates(): string[] {
   return Array.from(new Set(list));
 }
 
-const MODEL_TIMEOUT_MS = 8_000;
-const MODEL_TIMEOUT_STREAM_MS = 25_000;
+const MODEL_TIMEOUT_MS = 9_000;
+const STREAM_TIMEOUT_MS = 20_000;
 
 class ModelTimeoutError extends Error {
   constructor() {
     super("ModelTimeout");
-    this.name = "ModelTimeout";
+    this.name = "ModelTimeoutError";
   }
 }
 
@@ -37,29 +62,324 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
 
-export class GeminiUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "GeminiUnavailableError";
-  }
+function toolPayload(
+  tools: Array<{ name: string; description: string; parameters: unknown }>
+): unknown[] {
+  return tools.map((fn) => ({
+    functionDeclarations: [
+      {
+        name: fn.name,
+        description: fn.description,
+        parameters: fn.parameters,
+      },
+    ],
+  }));
 }
 
-export function getGeminiClient(apiKey: string): GoogleGenerativeAI {
-  let client = clients.get(apiKey);
-  if (!client) {
-    client = new GoogleGenerativeAI(apiKey);
-    clients.set(apiKey, client);
-  }
-  return client;
-}
-
-const MAX_RETRIES = 2;
-const MAX_TOOL_ROUNDS = 3;
-
-function isRetryable(message: string): boolean {
+function isRetryableMessage(message: string): boolean {
   return !/quota|API key|permission|not found|API_KEY_INVALID|400/i.test(message);
 }
 
+async function restCall(
+  apiKey: string,
+  model: string,
+  body: Record<string, unknown>
+): Promise<RestPart[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}/${model}:generateContent?key=${apiKey.trim()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      candidates?: Array<{ content?: { parts?: RestPart[] } }>;
+      error?: { message?: string };
+    };
+    if (!res.ok) {
+      throw new Error(
+        data.error?.message ?? `Gemini request failed (${res.status})`
+      );
+    }
+    return data.candidates?.[0]?.content?.parts ?? [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function restStream(
+  apiKey: string,
+  model: string,
+  body: Record<string, unknown>,
+  onDelta: (chunk: string) => void
+): Promise<RestPart[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+  const collected: RestPart[] = [];
+
+  try {
+    const res = await fetch(
+      `${API_BASE}/${model}:streamGenerateContent?alt=sse&key=${apiKey.trim()}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      }
+    );
+
+    if (!res.ok || !res.body) {
+      throw new Error(`Gemini stream failed (${res.status})`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+
+      for (const chunk of chunks) {
+        for (const line of chunk.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          let parsed: {
+            candidates?: Array<{ content?: { parts?: RestPart[] } }>;
+          };
+          try {
+            parsed = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+          const parts = parsed.candidates?.[0]?.content?.parts ?? [];
+          for (const part of parts) {
+            collected.push(part);
+            if (part.text) onDelta(part.text);
+          }
+        }
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+
+  return collected;
+}
+
+function textFromParts(parts: RestPart[]): string {
+  return parts
+    .map((part) => part.text ?? "")
+    .join("")
+    .trim();
+}
+
+/**
+ * Generates a reply with bounded tool use (order booking / order status).
+ * Every tool validates its own inputs, tenant scope and current state.
+ */
+export async function generateGeminiTextWithTools({
+  apiKey,
+  model,
+  prompt,
+  tools,
+  toolContext,
+  temperature = 0.5,
+  maxOutputTokens = 400,
+}: {
+  apiKey: string;
+  model?: string;
+  prompt: string;
+  tools: Array<{
+    name: string;
+    description: string;
+    parameters: unknown;
+  }>;
+  toolContext: ToolContext;
+  temperature?: number;
+  maxOutputTokens?: number;
+}): Promise<string> {
+  const candidates = modelCandidates().includes(model ?? "")
+    ? modelCandidates()
+    : [model ?? "gemini-3.5-flash-lite", ...modelCandidates()];
+
+  const toolSpec = toolPayload(tools);
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    const contents: RestContent[] = [
+      { role: "user", parts: [{ text: prompt }] },
+    ];
+
+    try {
+      for (let round = 0; round < 3; round++) {
+        const parts = await withTimeout(
+          restCall(apiKey, candidate, {
+            contents,
+            tools: toolSpec,
+            generationConfig: { temperature, maxOutputTokens },
+          }),
+          MODEL_TIMEOUT_MS
+        );
+
+        const callPart = parts.find((part) => part.functionCall);
+        if (!callPart) {
+          const text = textFromParts(parts);
+          if (!text) throw new Error("Empty AI response");
+          return text;
+        }
+
+        // Echo the model turn back verbatim (it carries the thought signature
+        // that the API requires for tool results).
+        contents.push({ role: "model", parts: [callPart] });
+
+        const outcome = await runTool(
+          callPart.functionCall!.name,
+          callPart.functionCall!.args,
+          toolContext
+        );
+
+        contents.push({
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: callPart.functionCall!.name,
+                response: outcome.ok
+                  ? { ok: true, ...(outcome.data ?? {}) }
+                  : { ok: false, error: outcome.error ?? "Tool failed" },
+              },
+            } as unknown as RestPart,
+          ],
+        });
+      }
+
+      throw new Error("Tool loop did not converge");
+    } catch (error: unknown) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : "unknown";
+      console.error(
+        `[ai-error] scope=tool-call model=${candidate} message=${message.slice(0, 180)}`
+      );
+      if (!isRetryableMessage(message)) break;
+    }
+  }
+
+  throw new GeminiUnavailableError(
+    lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
+  );
+}
+
+/**
+ * Streaming variant used by the website chat: the browser receives text
+ * deltas while the model is still writing, so the reply feels immediate.
+ */
+export async function generateGeminiTextWithToolsStream({
+  apiKey,
+  model,
+  prompt,
+  tools,
+  toolContext,
+  temperature = 0.5,
+  maxOutputTokens = 400,
+  onDelta,
+}: {
+  apiKey: string;
+  model?: string;
+  prompt: string;
+  tools: Array<{
+    name: string;
+    description: string;
+    parameters: unknown;
+  }>;
+  toolContext: ToolContext;
+  temperature?: number;
+  maxOutputTokens?: number;
+  onDelta: (chunk: string) => void;
+}): Promise<string> {
+  const candidates = modelCandidates().includes(model ?? "")
+    ? modelCandidates()
+    : [model ?? "gemini-3.5-flash-lite", ...modelCandidates()];
+
+  const toolSpec = toolPayload(tools);
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    const contents: RestContent[] = [
+      { role: "user", parts: [{ text: prompt }] },
+    ];
+    let text = "";
+
+    try {
+      for (let round = 0; round < 3; round++) {
+        const parts = await withTimeout(
+          restStream(
+            apiKey,
+            candidate,
+            {
+              contents,
+              tools: toolSpec,
+              generationConfig: { temperature, maxOutputTokens },
+            },
+            onDelta
+          ),
+          STREAM_TIMEOUT_MS
+        );
+
+        const callPart = parts.find((part) => part.functionCall);
+        if (!callPart) {
+          if (!text.trim()) throw new Error("Empty AI response");
+          return text.trim();
+        }
+
+        contents.push({ role: "model", parts: [callPart] });
+
+        const outcome = await runTool(
+          callPart.functionCall!.name,
+          callPart.functionCall!.args,
+          toolContext
+        );
+
+        contents.push({
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: callPart.functionCall!.name,
+                response: outcome.ok
+                  ? { ok: true, ...(outcome.data ?? {}) }
+                  : { ok: false, error: outcome.error ?? "Tool failed" },
+              },
+            } as unknown as RestPart,
+          ],
+        });
+      }
+
+      throw new Error("Tool loop did not converge");
+    } catch (error: unknown) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : "unknown";
+      console.error(
+        `[ai-error] scope=tool-call-stream model=${candidate} message=${message.slice(0, 180)}`
+      );
+      if (!isRetryableMessage(message)) break;
+    }
+  }
+
+  throw new GeminiUnavailableError(
+    lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
+  );
+}
+
+/** Simple text generation without tools (used for short internal prompts). */
 export async function generateGeminiText({
   apiKey,
   model = "gemini-3.5-flash-lite",
@@ -73,126 +393,30 @@ export async function generateGeminiText({
   temperature?: number;
   maxOutputTokens?: number;
 }): Promise<string> {
-  const client = getGeminiClient(apiKey.trim());
-  const generativeModel = client.getGenerativeModel({
-    model: model.trim(),
-    generationConfig: {
-      temperature,
-      maxOutputTokens,
-    },
-  });
-
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      const delayMs = 400 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 200);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-    try {
-      const result = await generativeModel.generateContent(prompt);
-      const text = result.response.text();
-      if (!text.trim()) throw new Error("Empty AI response");
-      return text;
-    } catch (error: unknown) {
-      lastError = error;
-      const message = error instanceof Error ? error.message : "";
-      console.error(
-        `[ai-error] model=${model} attempt=${attempt + 1} message=${message.slice(0, 200)}`
-      );
-      if (!isRetryable(message)) {
-        throw new GeminiUnavailableError("AIServiceUnavailable");
-      }
-    }
-  }
-
-  throw new GeminiUnavailableError(
-    lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
-  );
-}
-
-/**
- * Generates a reply with bounded tool use (order booking / order status).
- * The model can only call the tools declared here; every tool validates its
- * own inputs, tenant scope and current state before touching data.
- */
-export async function generateGeminiTextWithTools({
-  apiKey,
-  model = "gemini-3.5-flash-lite",
-  prompt,
-  tools,
-  toolContext,
-  temperature = 0.5,
-  maxOutputTokens = 400,
-}: {
-  apiKey: string;
-  model?: string;
-  prompt: string;
-  tools: FunctionDeclaration[];
-  toolContext: ToolContext;
-  temperature?: number;
-  maxOutputTokens?: number;
-}): Promise<string> {
-  const client = getGeminiClient(apiKey.trim());
   const candidates = modelCandidates().includes(model)
     ? modelCandidates()
     : [model, ...modelCandidates()];
 
   let lastError: unknown;
-
   for (const candidate of candidates) {
     try {
-      const generativeModel = client.getGenerativeModel({
-        model: candidate,
-        generationConfig: {
-          temperature,
-          maxOutputTokens,
-        },
-        tools: [{ functionDeclarations: tools }],
-      });
-
-      const chat = generativeModel.startChat({
-        tools: [{ functionDeclarations: tools }],
-      });
-
-      let response = await withTimeout(
-        chat.sendMessage(prompt),
+      const parts = await withTimeout(
+        restCall(apiKey, candidate, {
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { temperature, maxOutputTokens },
+        }),
         MODEL_TIMEOUT_MS
       );
-
-      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const calls = response.response.functionCalls() ?? [];
-        if (!calls.length) break;
-
-        for (const call of calls) {
-          const outcome = await runTool(call.name, call.args, toolContext);
-          response = await withTimeout(
-            chat.sendMessage([
-              {
-                functionResponse: {
-                  name: call.name,
-                  response: outcome.ok
-                    ? { ok: true, ...(outcome.data ?? {}) }
-                    : { ok: false, error: outcome.error ?? "Tool failed" },
-                },
-              },
-            ]),
-            MODEL_TIMEOUT_MS
-          );
-        }
-      }
-
-      const text = response.response.text();
-      if (!text.trim()) {
-        throw new GeminiUnavailableError("Empty AI response");
-      }
+      const text = textFromParts(parts);
+      if (!text) throw new Error("Empty AI response");
       return text;
     } catch (error: unknown) {
       lastError = error;
+      const message = error instanceof Error ? error.message : "unknown";
       console.error(
-        `[ai-error] scope=tool-call model=${candidate} message=${
-          error instanceof Error ? error.message.slice(0, 160) : "unknown"
-        }`
+        `[ai-error] scope=text model=${candidate} message=${message.slice(0, 180)}`
       );
+      if (!isRetryableMessage(message)) break;
     }
   }
 
@@ -200,122 +424,3 @@ export async function generateGeminiTextWithTools({
     lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
   );
 }
-
-/**
- * Streaming variant: emits text deltas as they arrive so the chat feels
- * instant. Tool calls are still executed through the same bounded registry.
- */
-export async function generateGeminiTextWithToolsStream({
-  apiKey,
-  model = "gemini-3.5-flash-lite",
-  prompt,
-  tools,
-  toolContext,
-  temperature = 0.5,
-  maxOutputTokens = 400,
-  onDelta,
-}: {
-  apiKey: string;
-  model?: string;
-  prompt: string;
-  tools: FunctionDeclaration[];
-  toolContext: ToolContext;
-  temperature?: number;
-  maxOutputTokens?: number;
-  onDelta: (chunk: string) => void;
-}): Promise<string> {
-  const client = getGeminiClient(apiKey.trim());
-  const candidates = modelCandidates().includes(model)
-    ? modelCandidates()
-    : [model, ...modelCandidates()];
-
-  let lastError: unknown;
-
-  for (const candidate of candidates) {
-    const full = "";
-    let buffer = "";
-    try {
-      const generativeModel = client.getGenerativeModel({
-        model: candidate,
-        generationConfig: {
-          temperature,
-          maxOutputTokens,
-        },
-        tools: [{ functionDeclarations: tools }],
-      });
-
-      const chat = generativeModel.startChat({
-        tools: [{ functionDeclarations: tools }],
-      });
-
-      const streamResult = await withTimeout(
-        chat.sendMessageStream(prompt),
-        MODEL_TIMEOUT_STREAM_MS
-      );
-
-      for await (const chunk of streamResult.stream) {
-        const piece = chunk.text();
-        if (piece) {
-          buffer += piece;
-          onDelta(piece);
-        }
-      }
-
-      const aggregated = await streamResult.response;
-      let calls = (aggregated.functionCalls() ?? []) as Array<{
-        name: string;
-        args: object;
-      }>;
-
-      for (let round = 0; round < MAX_TOOL_ROUNDS && calls.length; round++) {
-        for (const call of calls) {
-          const outcome = await runTool(call.name, call.args, toolContext);
-          const next = await withTimeout(
-            chat.sendMessageStream([
-              {
-                functionResponse: {
-                  name: call.name,
-                  response: outcome.ok
-                    ? { ok: true, ...(outcome.data ?? {}) }
-                    : { ok: false, error: outcome.error ?? "Tool failed" },
-                },
-              },
-            ] as never),
-            MODEL_TIMEOUT_STREAM_MS
-          );
-
-          for await (const chunk of next.stream) {
-            const piece = chunk.text();
-            if (piece) {
-              buffer += piece;
-              onDelta(piece);
-            }
-          }
-          const nextAgg = await next.response;
-          calls = (nextAgg.functionCalls() ?? []) as Array<{
-            name: string;
-            args: object;
-          }>;
-        }
-      }
-
-      const text = buffer.trim();
-      if (!text) {
-        throw new GeminiUnavailableError("Empty AI response");
-      }
-      return text;
-    } catch (error: unknown) {
-      lastError = error;
-      console.error(
-        `[ai-error] scope=tool-call-stream model=${candidate} message=${
-          error instanceof Error ? error.message.slice(0, 160) : "unknown"
-        }`
-      );
-    }
-  }
-
-  throw new GeminiUnavailableError(
-    lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
-  );
-}
-

@@ -1,10 +1,12 @@
 ﻿import { createHash } from "crypto";
-import {
-  FunctionDeclarationSchemaType,
-  type FunctionDeclaration,
-} from "@google/generative-ai";
 import { createOrder } from "@/lib/services/orders";
 import { tenantCollection } from "@/lib/tenancy/resolver";
+
+export interface ToolDeclaration {
+  name: string;
+  description: string;
+  parameters: unknown;
+}
 
 export interface ToolContext {
   tenantId: string;
@@ -20,59 +22,60 @@ export interface ToolOutcome {
   error?: string;
 }
 
-const createOrderDeclaration = {
+const createOrderDeclaration: ToolDeclaration = {
   name: "create_order",
   description:
     "Books a real order for the business. Use this ONLY when the customer has given every required detail: the items with quantities, their name, their phone number, and for delivery the full address. The tool prices the order from the real menu, applies eligible offers and stores the order. If the tool returns an error, tell the customer what is missing and do not claim the order is placed.",
   parameters: {
-    type: FunctionDeclarationSchemaType.OBJECT,
+    type: "OBJECT",
     properties: {
       items: {
-        type: FunctionDeclarationSchemaType.ARRAY,
+        type: "ARRAY",
         description: "Items to order, using the exact itemId values from the menu list.",
         items: {
-          type: FunctionDeclarationSchemaType.OBJECT,
+          type: "OBJECT",
           properties: {
-            itemId: { type: FunctionDeclarationSchemaType.STRING },
-            quantity: { type: FunctionDeclarationSchemaType.INTEGER },
+            itemId: { type: "STRING" },
+            quantity: { type: "INTEGER" },
           },
           required: ["itemId", "quantity"],
         },
       },
-      customerName: { type: FunctionDeclarationSchemaType.STRING },
+      customerName: { type: "STRING" },
       customerPhone: {
-        type: FunctionDeclarationSchemaType.STRING,
+        type: "STRING",
         description: "Phone number with country code, digits only (e.g. 923001234567).",
       },
       fulfilmentType: {
-        type: FunctionDeclarationSchemaType.STRING,
+        type: "STRING",
+        format: "enum",
         enum: ["delivery", "pickup"],
       },
       address: {
-        type: FunctionDeclarationSchemaType.STRING,
+        type: "STRING",
         description: "Full delivery address. Required when fulfilmentType is delivery.",
       },
-      notes: { type: FunctionDeclarationSchemaType.STRING },
+      notes: { type: "STRING" },
     },
     required: ["items", "customerName", "customerPhone", "fulfilmentType"],
   },
 };
 
-const orderStatusDeclaration = {
+const orderStatusDeclaration: ToolDeclaration = {
   name: "get_order_status",
   description:
     "Returns the status of a previously placed order. Requires the order number and the same phone number used when ordering. Use this when the customer asks about an existing order.",
   parameters: {
-    type: FunctionDeclarationSchemaType.OBJECT,
+    type: "OBJECT",
     properties: {
-      orderNumber: { type: FunctionDeclarationSchemaType.STRING },
-      customerPhone: { type: FunctionDeclarationSchemaType.STRING },
+      orderNumber: { type: "STRING" },
+      customerPhone: { type: "STRING" },
     },
     required: ["orderNumber", "customerPhone"],
   },
 };
 
-export const toolDeclarations: FunctionDeclaration[] = [
+export const toolDeclarations: ToolDeclaration[] = [
   createOrderDeclaration,
   orderStatusDeclaration,
 ];
@@ -227,4 +230,8 @@ export async function runTool(
   }
   return { ok: false, error: `Unknown tool: ${name}` };
 }
+
+
+
+
 
