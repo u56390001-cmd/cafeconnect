@@ -44,6 +44,7 @@ const unhealthyUntil = new Map<string, number>();
 
 function markModelUnhealthy(model: string): void {
   unhealthyUntil.set(model, Date.now() + MODEL_COOLDOWN_MS);
+  void publishModelUnhealthy(model);
 }
 
 function isModelHealthy(model: string): boolean {
@@ -54,6 +55,54 @@ function isModelHealthy(model: string): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Model health is shared across serverless instances through a single
+ * Firestore document, so a degraded model is skipped everywhere instead of
+ * costing a timeout on every cold start.
+ */
+const HEALTH_DOC_PATH = "aiRuntime/modelHealth";
+const SHARED_HEALTH_TTL_MS = 60_000;
+let sharedHealthLoadedAt = 0;
+
+async function loadSharedHealth(): Promise<void> {
+  if (Date.now() - sharedHealthLoadedAt < SHARED_HEALTH_TTL_MS) return;
+  sharedHealthLoadedAt = Date.now();
+  try {
+    const { getAdminDb } = await import("@/lib/firebase/admin");
+    const snap = await getAdminDb().collection(HEALTH_DOC_PATH).doc("default").get();
+    if (!snap.exists) return;
+    const data = snap.data() ?? {};
+    const paused = (data.paused as Record<string, number>) ?? {};
+    for (const [model, until] of Object.entries(paused)) {
+      if (typeof until === "number" && until > Date.now()) {
+        unhealthyUntil.set(model, until);
+      }
+    }
+  } catch {
+    // Health sharing is best-effort; never block a reply for it.
+  }
+}
+
+async function publishModelUnhealthy(model: string): Promise<void> {
+  try {
+    const { getAdminDb } = await import("@/lib/firebase/admin");
+    await getAdminDb()
+      .collection(HEALTH_DOC_PATH)
+      .doc("default")
+      .set(
+        { paused: { [model]: Date.now() + MODEL_COOLDOWN_MS } },
+        { merge: true }
+      );
+  } catch {
+    // best effort
+  }
+}
+
+export async function healthyModelCandidates(): Promise<string[]> {
+  await loadSharedHealth();
+  return modelCandidates();
 }
 
 export function modelCandidates(): string[] {
@@ -266,9 +315,10 @@ export async function generateGeminiTextWithTools({
   deadline?: number;
 }): Promise<string> {
   const hardDeadline = deadline ?? Date.now() + REQUEST_DEADLINE_MS;
-  const candidates = modelCandidates().includes(model ?? "")
-    ? modelCandidates()
-    : [model ?? "gemini-3.5-flash-lite", ...modelCandidates()];
+  const available = await healthyModelCandidates();
+  const candidates = available.includes(model ?? "")
+    ? available
+    : [model ?? "gemini-3.5-flash-lite", ...available];
 
   const toolSpec = toolPayload(tools);
   let lastError: unknown;
@@ -375,9 +425,10 @@ export async function generateGeminiTextWithToolsStream({
   deadline?: number;
 }): Promise<string> {
   const hardDeadline = deadline ?? Date.now() + REQUEST_DEADLINE_MS;
-  const candidates = modelCandidates().includes(model ?? "")
-    ? modelCandidates()
-    : [model ?? "gemini-3.5-flash-lite", ...modelCandidates()];
+  const available = await healthyModelCandidates();
+  const candidates = available.includes(model ?? "")
+    ? available
+    : [model ?? "gemini-3.5-flash-lite", ...available];
 
   const toolSpec = toolPayload(tools);
   let lastError: unknown;
@@ -469,9 +520,10 @@ export async function generateGeminiText({
   temperature?: number;
   maxOutputTokens?: number;
 }): Promise<string> {
-  const candidates = modelCandidates().includes(model)
-    ? modelCandidates()
-    : [model, ...modelCandidates()];
+  const available = await healthyModelCandidates();
+  const candidates = available.includes(model)
+    ? available
+    : [model, ...available];
 
   let lastError: unknown;
   for (const candidate of candidates) {
