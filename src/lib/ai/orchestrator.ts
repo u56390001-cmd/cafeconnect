@@ -529,7 +529,9 @@ export async function respondToCustomer(options: {
   // retried by the cron worker if needed. It never delays the reply.
   if (customerId) {
     try {
-      const { enqueueMemoryJob } = await import("@/lib/customers/jobs");
+      const { enqueueMemoryJob, processMemoryJob } = await import(
+        "@/lib/customers/jobs"
+      );
       const jobId = await enqueueMemoryJob({
         tenantId,
         customerId,
@@ -539,8 +541,15 @@ export async function respondToCustomer(options: {
         assistantMessage: reply,
       });
       if (jobId) {
-        const { processMemoryJob } = await import("@/lib/customers/jobs");
-        void processMemoryJob(tenantId, jobId).catch(() => undefined);
+        // Keep the function alive so the job actually runs; the cron worker
+        // retries anything that is still pending.
+        const job = processMemoryJob(tenantId, jobId).catch(() => undefined);
+        try {
+          const { waitUntil } = await import("@vercel/functions");
+          waitUntil(job);
+        } catch {
+          void job;
+        }
       }
     } catch (error: unknown) {
       console.error(

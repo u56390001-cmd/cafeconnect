@@ -193,27 +193,27 @@ async function extractAndSave(
   }
 
   // 3) Language preference: "reply in Roman Urdu / Urdu / English".
-  const languageMatch = message.match(
-    /\b(reply|respond|baat|bola|answer)\b[^\n]{0,20}\b(in|with|using|ki|ka)\s+(roman urdu|urdu|english|pakistani english|urdu script)\b/i
-  );
-  if (languageMatch) {
-    const value = languageMatch[2].toLowerCase();
-    const key =
-      value.includes("roman")
-        ? "preferred_language"
-        : value.includes("urdu")
-          ? "preferred_language"
-          : "preferred_language";
-    const languageValue = value.includes("roman")
-      ? "ur-Latn-PK"
-      : value.includes("urdu")
-        ? "ur-PK"
-        : "en-PK";
+  const hasReplyIntent =
+    /\b(reply|respond|answer|baat|bola|jawab|reply karein|batao)\b/i.test(message) ||
+    /\b(mein|me|ko)\b[^\n]{0,20}\b(jawab|baat|reply)\b/i.test(message);
+
+  let languageValue: string | null = null;
+  if (/roman\s*urdu/i.test(message)) {
+    languageValue = "ur-Latn-PK";
+  } else if (/urdu\s*script|اردو\s*کریپٹ/i.test(message)) {
+    languageValue = "ur-PK";
+  } else if (/\benglish\b/i.test(message) && hasReplyIntent) {
+    languageValue = "en-PK";
+  } else if (/\burdu\b/i.test(message) && hasReplyIntent) {
+    languageValue = "ur-PK";
+  }
+
+  if (languageValue) {
     const memory = await saveMemory({
       tenantId,
       customerId: job.customerId,
       type: "preference",
-      key,
+      key: "preferred_language",
       value: languageValue,
       sourceType: "explicit",
       confidence: 0.9,
