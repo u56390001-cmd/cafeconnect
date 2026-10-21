@@ -270,6 +270,9 @@ export async function respondToCustomer(options: {
     }
   };
 
+  // Overall AI budget for this turn (blueprint: bounded request deadline).
+  const aiDeadline = Date.now() + 12_000;
+
   for (const apiKey of candidateKeys) {
     try {
       if (onDelta) {
@@ -284,6 +287,7 @@ export async function respondToCustomer(options: {
             onDelta?.(chunk);
           },
           onToolOutcome: captureToolOutcome,
+          deadline: aiDeadline,
         });
       } else {
         reply = await generateGeminiTextWithTools({
@@ -293,6 +297,7 @@ export async function respondToCustomer(options: {
           tools: toolDeclarations,
           toolContext,
           onToolOutcome: captureToolOutcome,
+          deadline: aiDeadline,
         });
       }
       break;
@@ -312,8 +317,9 @@ export async function respondToCustomer(options: {
   await inboundWrite.catch(() => undefined);
 
   if (reply === undefined) {
-    // If the order was actually created before the reply failed, the customer
-    // must still be told the real order number (never a false success).
+    // Deterministic, truthful fallback: if the order was created before the
+    // model failed, the customer still gets the real order number. Never a
+    // false success, never an empty reply.
     reply = toolState.order
       ? `${strings.orderCreated(
           toolState.order.orderNumber,
@@ -356,4 +362,5 @@ export async function respondToCustomer(options: {
 }
 
 export { generateGeminiText };
+
 

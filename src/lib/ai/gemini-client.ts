@@ -72,6 +72,13 @@ export function modelCandidates(): string[] {
 
 const MODEL_TIMEOUT_MS = 7_000;
 const STREAM_TIMEOUT_MS = 18_000;
+/** Total budget for one AI turn across all model candidates. */
+const REQUEST_DEADLINE_MS = 12_000;
+
+function remainingBudget(deadline?: number): number {
+  if (!deadline) return MODEL_TIMEOUT_MS;
+  return Math.max(0, deadline - Date.now());
+}
 
 class ModelTimeoutError extends Error {
   constructor() {
@@ -242,6 +249,7 @@ export async function generateGeminiTextWithTools({
   temperature = 0.5,
   maxOutputTokens = 400,
   onToolOutcome,
+  deadline,
 }: {
   apiKey: string;
   model?: string;
@@ -255,7 +263,9 @@ export async function generateGeminiTextWithTools({
   temperature?: number;
   maxOutputTokens?: number;
   onToolOutcome?: (name: string, outcome: { ok: boolean; data?: Record<string, unknown>; error?: string }) => void;
+  deadline?: number;
 }): Promise<string> {
+  const hardDeadline = deadline ?? Date.now() + REQUEST_DEADLINE_MS;
   const candidates = modelCandidates().includes(model ?? "")
     ? modelCandidates()
     : [model ?? "gemini-3.5-flash-lite", ...modelCandidates()];
@@ -264,19 +274,24 @@ export async function generateGeminiTextWithTools({
   let lastError: unknown;
 
   for (const candidate of candidates) {
+    const budget = remainingBudget(hardDeadline);
+    if (budget <= 0) break;
+
     const contents: RestContent[] = [
       { role: "user", parts: [{ text: prompt }] },
     ];
 
     try {
       for (let round = 0; round < 3; round++) {
+        const roundBudget = remainingBudget(hardDeadline);
+        if (roundBudget <= 0) throw new Error("RequestDeadlineExceeded");
         const parts = await withTimeout(
           restCall(apiKey, candidate, {
             contents,
             tools: toolSpec,
             generationConfig: { temperature, maxOutputTokens },
           }),
-          MODEL_TIMEOUT_MS
+          Math.min(MODEL_TIMEOUT_MS, roundBudget)
         );
 
         const callPart = parts.find((part) => part.functionCall);
@@ -342,6 +357,7 @@ export async function generateGeminiTextWithToolsStream({
   maxOutputTokens = 400,
   onDelta,
   onToolOutcome,
+  deadline,
 }: {
   apiKey: string;
   model?: string;
@@ -356,7 +372,9 @@ export async function generateGeminiTextWithToolsStream({
   maxOutputTokens?: number;
   onDelta: (chunk: string) => void;
   onToolOutcome?: (name: string, outcome: { ok: boolean; data?: Record<string, unknown>; error?: string }) => void;
+  deadline?: number;
 }): Promise<string> {
+  const hardDeadline = deadline ?? Date.now() + REQUEST_DEADLINE_MS;
   const candidates = modelCandidates().includes(model ?? "")
     ? modelCandidates()
     : [model ?? "gemini-3.5-flash-lite", ...modelCandidates()];
@@ -365,6 +383,7 @@ export async function generateGeminiTextWithToolsStream({
   let lastError: unknown;
 
   for (const candidate of candidates) {
+    if (remainingBudget(hardDeadline) <= 0) break;
     const contents: RestContent[] = [
       { role: "user", parts: [{ text: prompt }] },
     ];
@@ -372,6 +391,8 @@ export async function generateGeminiTextWithToolsStream({
 
     try {
       for (let round = 0; round < 3; round++) {
+        const roundBudget = remainingBudget(hardDeadline);
+        if (roundBudget <= 0) throw new Error("RequestDeadlineExceeded");
         const parts = await withTimeout(
           restStream(
             apiKey,
@@ -383,7 +404,7 @@ export async function generateGeminiTextWithToolsStream({
             },
             onDelta
           ),
-          STREAM_TIMEOUT_MS
+          Math.min(STREAM_TIMEOUT_MS, roundBudget)
         );
 
         const callPart = parts.find((part) => part.functionCall);
@@ -479,4 +500,5 @@ export async function generateGeminiText({
     lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
   );
 }
+
 
