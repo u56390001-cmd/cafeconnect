@@ -143,11 +143,12 @@ async function restStream(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      const chunks = buffer.split("\n\n");
+      // The Gemini SSE endpoint separates events with \r\n\r\n.
+      const chunks = buffer.split(/\r?\n\r?\n/);
       buffer = chunks.pop() ?? "";
 
       for (const chunk of chunks) {
-        for (const line of chunk.split("\n")) {
+        for (const line of chunk.split(/\r?\n/)) {
           const trimmed = line.trim();
           if (!trimmed.startsWith("data:")) continue;
           const payload = trimmed.slice(5).trim();
@@ -165,6 +166,26 @@ async function restStream(
             collected.push(part);
             if (part.text) onDelta(part.text);
           }
+        }
+      }
+    }
+
+    // Flush a trailing event that arrived without a separator.
+    if (buffer.trim()) {
+      for (const line of buffer.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        try {
+          const parsed = JSON.parse(trimmed.slice(5).trim()) as {
+            candidates?: Array<{ content?: { parts?: RestPart[] } }>;
+          };
+          const parts = parsed.candidates?.[0]?.content?.parts ?? [];
+          for (const part of parts) {
+            collected.push(part);
+            if (part.text) onDelta(part.text);
+          }
+        } catch {
+          // ignore malformed tail
         }
       }
     }
