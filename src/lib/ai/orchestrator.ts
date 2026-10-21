@@ -162,7 +162,9 @@ export async function respondToCustomer(options: {
   ]);
   const contextReadyAt = Date.now();
 
-  await addMessage(tenantId, conversationId, {
+  // Persist the inbound message while the model is generating (saves a round
+  // trip and keeps the conversation durable even if generation fails).
+  const inboundWrite = addMessage(tenantId, conversationId, {
     direction: "inbound",
     senderType: "customer",
     content: message,
@@ -261,6 +263,7 @@ export async function respondToCustomer(options: {
   }
 
   const modelDoneAt = Date.now();
+  await inboundWrite.catch(() => undefined);
 
   if (reply === undefined) {
     // If the order was actually created before the reply failed, the customer

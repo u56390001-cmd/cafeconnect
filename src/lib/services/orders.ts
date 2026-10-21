@@ -16,6 +16,8 @@ export interface CreateOrderInput {
   notes?: string;
   idempotencyKey: string;
   channel: string;
+  /** Optional: avoids an extra read when the caller already knows it. */
+  currency?: string;
 }
 
 export interface PricingResult {
@@ -33,55 +35,85 @@ function quantityIsValid(qty: number): boolean {
   return Number.isInteger(qty) && qty >= 1 && qty <= 20;
 }
 
-async function loadEligibleOffer(
-  tenantId: string,
-  lineItems: Array<{ itemId: string; categoryId: string; unitPriceMinor: number; quantity: number }>,
-  subtotalMinor: number
-): Promise<{
-  offerId: string;
-  name: string;
-  discountMinor: number;
-} | null> {
-  const snap = await tenantCollection(tenantId, "offers")
-    .where("status", "==", "active")
-    .get();
+type OfferData = Record<string, unknown>;
 
+function offerScope(d: OfferData): {
+  categoryIds: string[];
+  itemIds: string[];
+  scoped: boolean;
+} {
+  const categoryIds = Array.isArray(d.scopeCategoryIds)
+    ? (d.scopeCategoryIds as string[])
+    : [];
+  const itemIds = Array.isArray(d.scopeItemIds) ? (d.scopeItemIds as string[]) : [];
+  return { categoryIds, itemIds, scoped: categoryIds.length > 0 || itemIds.length > 0 };
+}
+
+function offerIsLive(d: OfferData, now: number): boolean {
+  const start = d.startAt ? new Date(d.startAt as Date).getTime() : 0;
+  const end = d.endAt ? new Date(d.endAt as Date).getTime() : 0;
+  if (start && start > now) return false;
+  if (end && end < now) return false;
+  return true;
+}
+
+function scopedSubtotal(
+  d: OfferData,
+  lineItems: Array<{
+    itemId: string;
+    categoryId: string;
+    unitPriceMinor: number;
+    quantity: number;
+  }>
+): { subtotal: number; eligible: boolean } {
+  const { categoryIds, itemIds, scoped } = offerScope(d);
+  if (!scoped) {
+    return {
+      subtotal: lineItems.reduce(
+        (sum, line) => sum + line.unitPriceMinor * line.quantity,
+        0
+      ),
+      eligible: true,
+    };
+  }
+  const eligibleLines = lineItems.filter(
+    (line) =>
+      (categoryIds.length === 0 || categoryIds.includes(line.categoryId)) &&
+      (itemIds.length === 0 || itemIds.includes(line.itemId))
+  );
+  return {
+    subtotal: eligibleLines.reduce(
+      (sum, line) => sum + line.unitPriceMinor * line.quantity,
+      0
+    ),
+    eligible: eligibleLines.length > 0,
+  };
+}
+
+/**
+ * Picks the best discount offer for the cart.
+ * Scoped offers (category/item scoped) only discount the matching lines and
+ * their minimum order is checked against that scoped subtotal.
+ */
+function selectEligibleOffer(
+  offers: OfferData[],
+  lineItems: Array<{
+    itemId: string;
+    categoryId: string;
+    unitPriceMinor: number;
+    quantity: number;
+  }>,
+  subtotalMinor: number
+): { offerId: string; name: string; discountMinor: number } | null {
   const now = Date.now();
   let best: { offerId: string; name: string; discountMinor: number } | null = null;
 
-  for (const doc of snap.docs) {
-    const d = doc.data();
-    const start = d.startAt ? new Date(d.startAt as Date).getTime() : 0;
-    const end = d.endAt ? new Date(d.endAt as Date).getTime() : 0;
-    if (start && start > now) continue;
-    if (end && end < now) continue;
+  for (const d of offers) {
+    if (d.type === "freeDelivery") continue;
+    if (!offerIsLive(d, now)) continue;
 
-    // Scoped offers (category / item scoped) only apply to the matching lines
-    // and the discount is calculated on the scoped subtotal.
-    const scopeCategoryIds: string[] = Array.isArray(d.scopeCategoryIds)
-      ? d.scopeCategoryIds
-      : [];
-    const scopeItemIds: string[] = Array.isArray(d.scopeItemIds)
-      ? d.scopeItemIds
-      : [];
-
-    const isScoped = scopeCategoryIds.length > 0 || scopeItemIds.length > 0;
-    const eligibleLines = isScoped
-      ? lineItems.filter(
-          (line) =>
-            (scopeCategoryIds.length === 0 ||
-              scopeCategoryIds.includes(line.categoryId)) &&
-            (scopeItemIds.length === 0 || scopeItemIds.includes(line.itemId))
-        )
-      : lineItems;
-
-    if (isScoped && eligibleLines.length === 0) continue;
-
-    const scopedSubtotal = eligibleLines.reduce(
-      (sum, line) => sum + line.unitPriceMinor * line.quantity,
-      0
-    );
-    const baseSubtotal = isScoped ? scopedSubtotal : subtotalMinor;
+    const { subtotal: baseSubtotal, eligible } = scopedSubtotal(d, lineItems);
+    if (!eligible) continue;
 
     const minOrder = Number(d.minOrderMinor ?? 0);
     if (minOrder && baseSubtotal < minOrder) continue;
@@ -91,64 +123,40 @@ async function loadEligibleOffer(
       discount = Math.round((baseSubtotal * Number(d.valuePct ?? 0)) / 100);
     } else if (d.type === "fixedDiscount") {
       discount = Math.min(Number(d.valueMinor ?? 0), baseSubtotal);
-    } else if (d.type === "freeDelivery") {
-      // handled by the delivery fee waiver in createOrder
-      discount = 0;
     }
 
     if (discount > (best?.discountMinor ?? 0)) {
-      best = { offerId: d.offerId || doc.id, name: d.name, discountMinor: discount };
+      best = {
+        offerId: String(d.offerId ?? ""),
+        name: String(d.name ?? ""),
+        discountMinor: discount,
+      };
     }
   }
 
   return best;
 }
 
-async function loadFreeDeliveryOffer(
-  tenantId: string,
-  lineItems: Array<{ itemId: string; categoryId: string; unitPriceMinor: number; quantity: number }>,
+function selectFreeDeliveryOffer(
+  offers: OfferData[],
+  lineItems: Array<{
+    itemId: string;
+    categoryId: string;
+    unitPriceMinor: number;
+    quantity: number;
+  }>,
   subtotalMinor: number
-): Promise<{ offerId: string; name: string } | null> {
-  const snap = await tenantCollection(tenantId, "offers")
-    .where("status", "==", "active")
-    .get();
-
+): { offerId: string; name: string } | null {
   const now = Date.now();
-  for (const doc of snap.docs) {
-    const d = doc.data();
+  for (const d of offers) {
     if (d.type !== "freeDelivery") continue;
-    const start = d.startAt ? new Date(d.startAt as Date).getTime() : 0;
-    const end = d.endAt ? new Date(d.endAt as Date).getTime() : 0;
-    if (start && start > now) continue;
-    if (end && end < now) continue;
-
-    const scopeCategoryIds: string[] = Array.isArray(d.scopeCategoryIds)
-      ? d.scopeCategoryIds
-      : [];
-    const scopeItemIds: string[] = Array.isArray(d.scopeItemIds)
-      ? d.scopeItemIds
-      : [];
-    const isScoped = scopeCategoryIds.length > 0 || scopeItemIds.length > 0;
-    const eligibleLines = isScoped
-      ? lineItems.filter(
-          (line) =>
-            (scopeCategoryIds.length === 0 ||
-              scopeCategoryIds.includes(line.categoryId)) &&
-            (scopeItemIds.length === 0 || scopeItemIds.includes(line.itemId))
-        )
-      : lineItems;
-    if (isScoped && eligibleLines.length === 0) continue;
-
-    const baseSubtotal = eligibleLines.reduce(
-      (sum, line) => sum + line.unitPriceMinor * line.quantity,
-      0
-    );
+    if (!offerIsLive(d, now)) continue;
+    const { subtotal: baseSubtotal, eligible } = scopedSubtotal(d, lineItems);
+    if (!eligible) continue;
     const minOrder = Number(d.minOrderMinor ?? 0);
     if (minOrder && baseSubtotal < minOrder) continue;
-
-    return { offerId: d.offerId || doc.id, name: d.name };
+    return { offerId: String(d.offerId ?? ""), name: String(d.name ?? "") };
   }
-
   return null;
 }
 
@@ -220,12 +228,21 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     quantity: number;
   }> = [];
 
-  // Read the menu items in parallel (one round trip instead of N).
-  const itemSnaps = await Promise.all(
-    input.items.map((entry) =>
-      tenantDoc(input.tenantId, "menuItems", entry.itemId).get()
-    )
-  );
+  // Read the menu items, the delivery settings and the offers in parallel
+  // (one round trip instead of three).
+  const [itemSnaps, deliverySettingsSnap, offersSnap] = await Promise.all([
+    Promise.all(
+      input.items.map((entry) =>
+        tenantDoc(input.tenantId, "menuItems", entry.itemId).get()
+      )
+    ),
+    input.fulfilmentType === "delivery"
+      ? tenantDoc(input.tenantId, "settings", "delivery").get()
+      : Promise.resolve(null),
+    tenantCollection(input.tenantId, "offers")
+      .where("status", "==", "active")
+      .get(),
+  ]);
 
   for (let index = 0; index < itemSnaps.length; index++) {
     const itemSnap = itemSnaps[index];
@@ -256,14 +273,12 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     });
   }
 
-  let deliveryFeeMinor = 0;
-  if (input.fulfilmentType === "delivery") {
-    const settingsSnap = await tenantDoc(input.tenantId, "settings", "delivery").get();
-    deliveryFeeMinor = Number(settingsSnap.data()?.deliveryFeeMinor ?? 0);
-  }
+  const deliveryFeeMinor = deliverySettingsSnap
+    ? Number(deliverySettingsSnap.data()?.deliveryFeeMinor ?? 0)
+    : 0;
 
-  const offer = await loadEligibleOffer(
-    input.tenantId,
+  const offer = selectEligibleOffer(
+    offersSnap.docs.map((doc) => doc.data()),
     lineItems,
     pricing.subtotalMinor
   );
@@ -273,8 +288,8 @@ export async function createOrder(input: CreateOrderInput): Promise<{
   }
 
   // A free-delivery offer waives the delivery fee (never the item subtotal).
-  const freeDeliveryOffer = await loadFreeDeliveryOffer(
-    input.tenantId,
+  const freeDeliveryOffer = selectFreeDeliveryOffer(
+    offersSnap.docs.map((doc) => doc.data()),
     lineItems,
     pricing.subtotalMinor
   );
@@ -292,7 +307,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
 
   const orderNumber = `TC-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${randomBytes(2).toString("hex").toUpperCase()}`;
 
-  const currency = await getCurrency(input.tenantId);
+  const currency = input.currency ?? (await getCurrency(input.tenantId));
 
   await orderRef.set({
     orderId: docId,

@@ -135,6 +135,7 @@ async function runCreateOrder(
         fulfilmentType,
       }),
       channel: context.channel,
+      currency: context.currency,
     });
 
     const money = (minor: number) =>
