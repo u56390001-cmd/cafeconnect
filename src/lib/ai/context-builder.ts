@@ -61,9 +61,21 @@ export interface TenantAiContext {
   knowledge: KnowledgeContext[];
 }
 
-const MAX_KNOWLEDGE_ITEMS = 10;
-const MAX_KNOWLEDGE_CHARS = 1500;
-const MAX_ITEMS = 120;
+const MAX_KNOWLEDGE_ITEMS = 6;
+const MAX_KNOWLEDGE_CHARS = 900;
+const MAX_ITEMS = 60;
+const CONTEXT_CACHE_TTL_MS = 60_000;
+
+interface CachedContext {
+  expiresAt: number;
+  context: TenantAiContext;
+}
+
+const contextCache = new Map<string, CachedContext>();
+
+export function invalidateAiContext(tenantId: string): void {
+  contextCache.delete(tenantId);
+}
 
 const STOP_WORDS = new Set([
   "the","a","an","is","are","was","were","do","does","did","i","you","me","my","we","our",
@@ -113,6 +125,31 @@ export async function loadTenantAiContext(
   tenantId: string,
   query?: string
 ): Promise<TenantAiContext> {
+  const cached = contextCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.context;
+  }
+
+  const context = await buildTenantAiContext(tenantId, query);
+  contextCache.set(tenantId, {
+    context,
+    expiresAt: Date.now() + CONTEXT_CACHE_TTL_MS,
+  });
+  return context;
+}
+
+interface RawTenantData {
+  profile: Record<string, unknown>;
+  aiSettings: Record<string, unknown>;
+  delivery: Record<string, unknown>;
+  categories: Array<Record<string, unknown>>;
+  items: Array<Record<string, unknown>>;
+  offers: Array<Record<string, unknown>>;
+  knowledge: Array<{ title: string; category: string; content: string }>;
+  currency: string;
+}
+
+async function loadRawTenantData(tenantId: string): Promise<RawTenantData> {
   const [
     profileSnap,
     aiSnap,
@@ -139,44 +176,68 @@ export async function loadTenantAiContext(
       .get(),
   ]);
 
-  const profile = profileSnap.data() ?? {};
-  const aiSettings = aiSnap.data() ?? {};
-  const delivery = deliverySnap.data() ?? {};
-  const currency = String(profile.currency ?? "PKR");
+  return {
+    profile: (profileSnap.data() ?? {}) as Record<string, unknown>,
+    aiSettings: (aiSnap.data() ?? {}) as Record<string, unknown>,
+    delivery: (deliverySnap.data() ?? {}) as Record<string, unknown>,
+    categories: categoriesSnap.docs.map((doc) => doc.data()),
+    items: itemsSnap.docs.map((doc) => doc.data()),
+    offers: offersSnap.docs.map((doc) => doc.data()),
+    knowledge: knowledgeSnap.docs.map((doc) => {
+      const d = doc.data();
+      return {
+        title: d.title || "",
+        category: d.category || "",
+        content: String(d.contentReference ?? d.content ?? "").slice(
+          0,
+          MAX_KNOWLEDGE_CHARS
+        ),
+      };
+    }),
+    currency: String((profileSnap.data() ?? {}).currency ?? "PKR"),
+  };
+}
+
+async function buildTenantAiContext(
+  tenantId: string,
+  query?: string
+): Promise<TenantAiContext> {
+  const raw = await loadRawTenantData(tenantId);
+
+  const profile = raw.profile;
+  const aiSettings = raw.aiSettings;
+  const delivery = raw.delivery;
+  const currency = raw.currency;
 
   const categoriesMap = new Map<string, string>();
-  const categories = categoriesSnap.docs
-    .sort((a, b) => (a.data().sortOrder ?? 0) - (b.data().sortOrder ?? 0))
-    .map((doc) => {
-      const d = doc.data();
-      const id = d.categoryId || doc.id;
-      categoriesMap.set(id, d.name || "Other");
-      return { categoryId: id, name: d.name || "Other" };
+  const categories = raw.categories
+    .sort((a, b) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0))
+    .map((d) => {
+      const id = String(d.categoryId || d.id || "");
+      categoriesMap.set(id, String(d.name || "Other"));
+      return { categoryId: id, name: String(d.name || "Other") };
     });
 
-  const items = itemsSnap.docs.slice(0, MAX_ITEMS).map((doc) => {
-    const d = doc.data();
+  const items = raw.items.slice(0, MAX_ITEMS).map((d) => {
     const minor = Number(d.basePriceMinor || 0);
     return {
-      itemId: d.itemId || doc.id,
-      categoryName: categoriesMap.get(d.categoryId || "") ?? "Other",
-      name: d.name || "",
-      description: d.description || "",
+      itemId: String(d.itemId || d.id || ""),
+      categoryName: categoriesMap.get(String(d.categoryId || "")) ?? "Other",
+      name: String(d.name || ""),
+      description: String(d.description || ""),
       priceLabel: `${currency} ${(minor / 100).toFixed(0)}`,
-      availability: d.availability || "available",
+      availability: String(d.availability || "available"),
     };
   });
 
   const now = Date.now();
-  const offers = offersSnap.docs
-    .filter((doc) => {
-      const d = doc.data();
+  const offers = raw.offers
+    .filter((d) => {
       const end = toTimestampMs(d.endAt);
       const start = toTimestampMs(d.startAt);
       return (!start || start <= now) && (!end || end >= now);
     })
-    .map((doc) => {
-      const d = doc.data();
+    .map((d) => {
       const valueLabel =
         d.type === "percentage"
           ? `${d.valuePct}% off`
@@ -186,9 +247,9 @@ export async function loadTenantAiContext(
               ? "Free delivery"
               : "Special offer";
       return {
-        offerId: d.offerId || doc.id,
-        name: d.name || "",
-        description: d.description || "",
+        offerId: String(d.offerId ?? ""),
+        name: String(d.name ?? ""),
+        description: String(d.description ?? ""),
         valueLabel,
         minOrderLabel: d.minOrderMinor
           ? `${currency} ${(Number(d.minOrderMinor) / 100).toFixed(0)} minimum`
@@ -197,19 +258,7 @@ export async function loadTenantAiContext(
     });
 
   const queryTokens = tokenize(query ?? "");
-  const knowledgeEntries = knowledgeSnap.docs.map((doc) => {
-    const d = doc.data();
-    return {
-      title: d.title || "",
-      category: d.category || "",
-      content: String(d.contentReference ?? d.content ?? "").slice(
-        0,
-        MAX_KNOWLEDGE_CHARS
-      ),
-    };
-  });
-
-  const knowledge = knowledgeEntries
+  const knowledge = raw.knowledge
     .map((entry) => ({ entry, score: scoreKnowledge(entry, queryTokens) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_KNOWLEDGE_ITEMS)

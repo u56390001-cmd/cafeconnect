@@ -17,6 +17,7 @@ interface OrderItem {
 interface Order {
   orderId: string;
   orderNumber: string;
+  channel: string;
   status: string;
   paymentStatus: string;
   items: OrderItem[];
@@ -30,6 +31,13 @@ interface Order {
   notes?: string;
   createdAt: string;
 }
+
+const CHANNEL_LABEL: Record<string, string> = {
+  web: "Website",
+  whatsapp_qr: "WhatsApp",
+  whatsapp_meta: "WhatsApp (Meta)",
+  storefront: "Store",
+};
 
 const statusBadge: Record<string, string> = {
   received: "bg-warning/10 text-warning border-warning/30",
@@ -151,6 +159,9 @@ function OrdersPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="font-semibold">#{order.orderNumber}</p>
+                        <Badge variant="outline">
+                          {CHANNEL_LABEL[order.channel] ?? order.channel}
+                        </Badge>
                         <Badge variant="secondary" className={statusBadge[order.status]}>
                           {order.status}
                         </Badge>

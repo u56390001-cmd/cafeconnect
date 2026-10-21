@@ -47,6 +47,7 @@ export function ChatWidget({
   const [lastFailed, setLastFailed] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const streamingIndexRef = useRef<number | null>(null);
 
   const key = publicWidgetId?.trim() ?? "";
 
@@ -104,8 +105,11 @@ export function ChatWidget({
       setBusy(true);
       setLastFailed(null);
 
+      // Stream the reply so it starts appearing within the first second.
+      let streamed = "";
+      streamingIndexRef.current = null;
       try {
-        const res = await fetch("/api/widget/message", {
+        const res = await fetch("/api/widget/message/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -114,21 +118,59 @@ export function ChatWidget({
             conversationId: conversationId ?? undefined,
           }),
         });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          throw new Error(
-            data?.error?.message ?? "The assistant could not respond right now."
-          );
+
+        if (!res.ok || !res.body) {
+          throw new Error("The assistant could not respond right now.");
         }
-        setConversationId(data.data?.conversationId ?? null);
-        setMessages((m) => [
-          ...m,
-          {
-            role: "assistant",
-            content: data.data?.reply ?? "",
-            at: Date.now(),
-          },
-        ]);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() ?? "";
+
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data:")) continue;
+            const payload = JSON.parse(line.slice(5).trim()) as {
+              type: string;
+              text?: string;
+              conversationId?: string;
+              message?: string;
+            };
+
+            if (payload.type === "delta" && payload.text) {
+              streamed += payload.text;
+              if (streamingIndexRef.current === null) {
+                setMessages((m) => {
+                  const next = [
+                    ...m,
+                    { role: "assistant" as const, content: payload.text!, at: Date.now() },
+                  ];
+                  streamingIndexRef.current = next.length - 1;
+                  return next;
+                });
+              } else {
+                const index = streamingIndexRef.current;
+                setMessages((m) =>
+                  m.map((msg, i) =>
+                    i === index ? { ...msg, content: msg.content + payload.text } : msg
+                  )
+                );
+              }
+            } else if (payload.type === "done" && payload.conversationId) {
+              setConversationId(payload.conversationId);
+            } else if (payload.type === "error") {
+              throw new Error(payload.message ?? "Something went wrong.");
+            }
+          }
+        }
       } catch (err: unknown) {
         const message =
           err instanceof Error ? err.message : "Something went wrong. Please retry.";

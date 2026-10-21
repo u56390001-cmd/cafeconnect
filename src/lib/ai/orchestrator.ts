@@ -1,8 +1,10 @@
 import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
+import { FieldValue } from "firebase-admin/firestore";
 import { getTenantApiKey } from "@/lib/settings/keys";
 import { loadTenantAiContext, type TenantAiContext } from "./context-builder";
 import { buildGroundedPrompt, type PromptMessage } from "./prompt-builder";
-import { generateGeminiText } from "./gemini-client";
+import { generateGeminiText, generateGeminiTextWithTools, generateGeminiTextWithToolsStream } from "./gemini-client";
+import { runTool, toolDeclarations, type ToolContext } from "./tools";
 
 export type ChatChannel = "web" | "whatsapp_meta" | "whatsapp_qr";
 
@@ -80,43 +82,39 @@ export async function addMessage(
     .doc(conversationId)
     .collection("messages")
     .doc();
-  await ref.set({
-    messageId: ref.id,
-    tenantId,
-    conversationId,
-    direction: payload.direction,
-    senderType: payload.senderType,
-    content: payload.content,
-    processingStatus: "processed",
-    deliveryStatus: payload.direction === "outbound" ? "sent" : "received",
-    sourceReferences: payload.sourceReferences ?? [],
-    createdAt: new Date(),
-  });
 
-  await tenantDoc(tenantId, "conversations", conversationId).set(
-    {
-      messageCount: (await _countMessages(tenantId, conversationId)) ?? 0,
-      lastMessageAt: new Date(),
-      updatedAt: new Date(),
-    },
-    { merge: true }
-  );
+  // Message write and conversation update run in parallel (two round trips
+  // instead of three sequential ones).
+  await Promise.all([
+    ref.set({
+      messageId: ref.id,
+      tenantId,
+      conversationId,
+      direction: payload.direction,
+      senderType: payload.senderType,
+      content: payload.content,
+      processingStatus: "processed",
+      deliveryStatus: payload.direction === "outbound" ? "sent" : "received",
+      sourceReferences: payload.sourceReferences ?? [],
+      createdAt: new Date(),
+    }),
+    tenantDoc(tenantId, "conversations", conversationId).set(
+      {
+        messageCount: FieldValue.increment(1),
+        lastMessageAt: new Date(),
+        updatedAt: new Date(),
+      },
+      { merge: true }
+    ),
+  ]);
 
   return ref.id;
-}
-
-async function _countMessages(tenantId: string, conversationId: string): Promise<number> {
-  const snap = await tenantCollection(tenantId, "conversations")
-    .doc(conversationId)
-    .collection("messages")
-    .get();
-  return snap.size;
 }
 
 export async function loadHistory(
   tenantId: string,
   conversationId: string,
-  limit = 16
+  limit = 8
 ): Promise<PromptMessage[]> {
   const snap = await tenantCollection(tenantId, "conversations")
     .doc(conversationId)
@@ -144,8 +142,10 @@ export async function respondToCustomer(options: {
   message: string;
   conversationId?: string;
   customerReference?: string;
+  onDelta?: (chunk: string) => void;
 }): Promise<OutboundReply> {
-  const { tenantId, channel, message } = options;
+  const startedAt = Date.now();
+  const { tenantId, channel, message, onDelta } = options;
   const customerReference = options.customerReference ?? "guest";
 
   const conversationId = await ensureConversation(
@@ -155,14 +155,19 @@ export async function respondToCustomer(options: {
     customerReference
   );
 
-  const history = await loadHistory(tenantId, conversationId);
+  // Load history and tenant context in parallel.
+  const [history, context] = await Promise.all([
+    loadHistory(tenantId, conversationId),
+    loadTenantAiContext(tenantId, message),
+  ]);
+  const contextReadyAt = Date.now();
+
   await addMessage(tenantId, conversationId, {
     direction: "inbound",
     senderType: "customer",
     content: message,
   });
 
-  const context: TenantAiContext = await loadTenantAiContext(tenantId, message);
   const prompt = buildGroundedPrompt(context, [
     ...history,
     { role: "user", content: message },
@@ -184,16 +189,35 @@ export async function respondToCustomer(options: {
     throw new Error("AI key not configured");
   }
 
+  const toolContext: ToolContext = {
+    tenantId,
+    channel,
+    conversationId,
+    customerReference,
+    currency: context.currency,
+  };
+
   let reply: string | undefined;
   for (const apiKey of candidateKeys) {
     try {
-      reply = await generateGeminiText({
-        apiKey,
-        model: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
-        prompt,
-        temperature: 0.6,
-        maxOutputTokens: 700,
-      });
+      if (onDelta) {
+        reply = await generateGeminiTextWithToolsStream({
+          apiKey,
+          model: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
+          prompt,
+          tools: toolDeclarations,
+          toolContext,
+          onDelta,
+        });
+      } else {
+        reply = await generateGeminiTextWithTools({
+          apiKey,
+          model: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
+          prompt,
+          tools: toolDeclarations,
+          toolContext,
+        });
+      }
       break;
     } catch (error: unknown) {
       console.error(
@@ -203,6 +227,8 @@ export async function respondToCustomer(options: {
       );
     }
   }
+
+  const modelDoneAt = Date.now();
 
   if (reply === undefined) {
     reply =
@@ -221,5 +247,13 @@ export async function respondToCustomer(options: {
     content: reply,
   });
 
+  console.log(
+    `[ai-timing] tenant=${tenantId} channel=${channel} contextMs=${
+      contextReadyAt - startedAt
+    } modelMs=${modelDoneAt - contextReadyAt} totalMs=${Date.now() - startedAt}`
+  );
+
   return { reply, conversationId, customerName: context.businessName };
 }
+
+export { generateGeminiText };
