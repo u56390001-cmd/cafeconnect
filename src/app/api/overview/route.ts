@@ -13,7 +13,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     const tenantId = new URL(request.url).searchParams.get("tenantId");
     if (!tenantId) return createApiError("Missing tenantId", 400);
 
-    await requireTenantScope(tenantId, session.uid, "member");
+    const ctx = await requireTenantScope(tenantId, session.uid, "member");
 
     const [itemsSnap, ordersSnap, conversationsSnap, bookingsSnap, profileSnap] =
       await Promise.all([
@@ -54,6 +54,14 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const profile = profileSnap.data();
 
+    // Phase 5: sales insights (popular items + recommendation acceptance).
+    const { aggregatePopularItems, measureRecommendationAcceptance } =
+      await import("@/lib/ai/recommendations");
+    const [popular, acceptance] = await Promise.all([
+      aggregatePopularItems(ctx.tenantId, 5),
+      measureRecommendationAcceptance(ctx.tenantId),
+    ]);
+
     return createApiResponse({
       businessName: profile?.businessName ?? "",
       currency: profile?.currency ?? "PKR",
@@ -63,6 +71,13 @@ export async function GET(request: NextRequest): Promise<Response> {
       revenuePaidTodayMinor: revenueToday,
       openConversations,
       upcomingBookings,
+      popularItems: popular.map((item) => ({
+        itemId: item.itemId,
+        name: item.name,
+        quantitySold: item.quantitySold,
+      })),
+      recommendationAcceptanceRate: acceptance.rate,
+      recommendationsMade: acceptance.recommended,
     });
   } catch (error: unknown) {
     return handleApiError("api/overview", error);

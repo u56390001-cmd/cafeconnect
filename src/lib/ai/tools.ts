@@ -15,12 +15,16 @@ import {
   type CartErrorCode,
 } from "@/lib/services/carts";
 import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
+import { getCart } from "@/lib/services/carts";
+import { createBooking, BookingError } from "@/lib/services/bookings";
 import { stringsFor, type LanguageMode } from "@/lib/ai/language";
 
 export interface ToolDeclaration {
   name: string;
   description: string;
   parameters: unknown;
+  /** Tool contract version - bump when the arguments/result change. */
+  version?: number;
 }
 
 export interface ToolContext {
@@ -33,6 +37,8 @@ export interface ToolContext {
   languageMode?: LanguageMode;
   /** Active cart for this conversation (one cart per conversation). */
   cartId?: string;
+  /** Resolved tenant-scoped customer (for repeat orders and attribution). */
+  customerId?: string | null;
 }
 
 export interface ToolOutcome {
@@ -176,14 +182,80 @@ const handoffDeclaration: ToolDeclaration = {
   },
 };
 
+const recommendItemsDeclaration: ToolDeclaration = {
+  name: "recommend_items",
+  version: 1,
+  description:
+    "Recommends real menu items to the customer. Use it when the customer asks what to order, wants a recommendation, mentions a budget, or when you want to offer one optional add-on. Every result is a published, currently available item priced from the live menu. Recommendations are optional: offer at most ONE and never push if the customer says no.",
+  parameters: {
+    type: "OBJECT",
+    properties: {
+      budgetMinor: {
+        type: "INTEGER",
+        description:
+          "Maximum total spend for the suggestions in minor units (e.g. 1500 = PKR 15). Optional.",
+      },
+      purpose: {
+        type: "STRING",
+        description:
+          "What the recommendation is for, e.g. 'two people dinner', 'quick snack', 'family meal'.",
+      },
+      limit: { type: "INTEGER" },
+    },
+  },
+};
+
+const orderHistoryDeclaration: ToolDeclaration = {
+  name: "get_order_history",
+  version: 1,
+  description:
+    "Returns this customer's own previous orders so you can offer a repeat order. Use it when the customer asks 'my usual', 'same as last time' or wants to reorder. Only returns orders for the verified customer identity.",
+  parameters: {
+    type: "OBJECT",
+    properties: {
+      limit: { type: "INTEGER" },
+    },
+  },
+};
+
+const createBookingDeclaration: ToolDeclaration = {
+  name: "create_booking",
+  version: 1,
+  description:
+    "Books a table or reservation. Use it only when the customer has given the date (YYYY-MM-DD), time (HH:mm), party size, name and phone. The booking is stored as 'pending' for the team to confirm - never say it is confirmed.",
+  parameters: {
+    type: "OBJECT",
+    properties: {
+      date: { type: "STRING", description: "YYYY-MM-DD" },
+      time: { type: "STRING", description: "HH:mm in 24 hour time" },
+      partySize: { type: "INTEGER" },
+      customerName: { type: "STRING" },
+      customerPhone: { type: "STRING" },
+      type: {
+        type: "STRING",
+        format: "enum",
+        enum: ["table", "reservation", "event"],
+      },
+      notes: { type: "STRING" },
+    },
+    required: ["date", "time", "partySize", "customerName", "customerPhone"],
+  },
+};
+
 export const toolDeclarations: ToolDeclaration[] = [
   searchMenuDeclaration,
   updateCartDeclaration,
   quoteOrderDeclaration,
   createOrderDeclaration,
   orderStatusDeclaration,
+  recommendItemsDeclaration,
+  orderHistoryDeclaration,
+  createBookingDeclaration,
   handoffDeclaration,
 ];
+
+/** Version of the shared tool contract. */
+export const TOOL_REGISTRY_VERSION = "2026-10-21.tools-v1";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -489,6 +561,7 @@ async function runCreateOrder(
         typeof args.customerPhone === "string" ? args.customerPhone : undefined,
       address: typeof args.address === "string" ? args.address : undefined,
       notes: typeof args.notes === "string" ? args.notes : undefined,
+      customerId: context.customerId ?? null,
     });
 
     const money = (minor: number) =>
@@ -630,6 +703,140 @@ async function runHandoffToStaff(
   };
 }
 
+/**
+ * Recommends live, available items (popularity driven, budget bounded).
+ */
+async function runRecommendItems(
+  args: Record<string, unknown>,
+  context: ToolContext
+): Promise<ToolOutcome> {
+  try {
+    const { buildRecommendations } = await import("@/lib/ai/recommendations");
+    const cart = await getCart(context.tenantId, context.cartId ?? "");
+    const budgetMinor =
+      typeof args.budgetMinor === "number" && args.budgetMinor > 0
+        ? Math.round(args.budgetMinor)
+        : null;
+
+    const { recommendations, popular } = await buildRecommendations({
+      tenantId: context.tenantId,
+      currency: context.currency,
+      cartItemIds: cart?.items.map((line) => line.itemId) ?? [],
+      budgetMinor,
+      limit: Math.min(Number(args.limit ?? 4) || 4, 8),
+    });
+
+    return {
+      ok: true,
+      data: {
+        recommendations: recommendations.map((item) => ({
+          itemId: item.itemId,
+          name: item.name,
+          priceLabel: item.priceLabel,
+          reason: item.reason,
+          kind: item.kind,
+        })),
+        budgetMinor,
+        popularItems: popular.slice(0, 5).map((item) => ({
+          itemId: item.itemId,
+          name: item.name,
+          quantitySold: item.quantitySold,
+        })),
+        guidance:
+          "Offer at most ONE of these as an optional add-on. If the customer declines, do not offer again.",
+      },
+    };
+  } catch (error: unknown) {
+    return cartFailure(context, error);
+  }
+}
+
+/** The customer's own previous orders (verified identity only). */
+async function runOrderHistory(
+  args: Record<string, unknown>,
+  context: ToolContext
+): Promise<ToolOutcome> {
+  try {
+    const { lastCompletedOrder } = await import("@/lib/ai/recommendations");
+    const limit = Math.min(Number(args.limit ?? 3) || 3, 5);
+    const last = await lastCompletedOrder(
+      context.tenantId,
+      context.customerReference
+    );
+
+    if (!last) {
+      return {
+        ok: true,
+        data: { orders: [], note: "No previous completed order for this customer." },
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        orders: [
+          {
+            orderNumber: last.orderNumber,
+            totalLabel: `${context.currency} ${(last.totalMinor / 100).toFixed(0)}`,
+            items: last.lines.map((line) => ({
+              itemId: line.itemId,
+              name: line.name,
+              quantity: line.quantity,
+            })),
+          },
+        ],
+        limit,
+        guidance:
+          "You may offer a repeat of this order. Confirm the items and the total with quote_order before placing anything.",
+      },
+    };
+  } catch (error: unknown) {
+    return cartFailure(context, error);
+  }
+}
+
+/** Books a table/reservation using the shared booking domain rules. */
+async function runCreateBooking(
+  args: Record<string, unknown>,
+  context: ToolContext
+): Promise<ToolOutcome> {
+  try {
+    const booking = await createBooking({
+      tenantId: context.tenantId,
+      customerName: String(args.customerName ?? ""),
+      phone: String(args.customerPhone ?? ""),
+      date: String(args.date ?? ""),
+      time: String(args.time ?? ""),
+      partySize: Number(args.partySize ?? 0),
+      notes: typeof args.notes === "string" ? args.notes : undefined,
+      type: (args.type as "table" | "reservation" | "event") ?? "table",
+      createdBy: "ai_agent",
+    });
+
+    return {
+      ok: true,
+      data: {
+        bookingId: booking.bookingId,
+        status: booking.status,
+        customerMessage: `Your table request for ${args.date} at ${args.time} is noted. The team will confirm it shortly.`,
+      },
+    };
+  } catch (error: unknown) {
+    if (error instanceof BookingError) {
+      return {
+        ok: false,
+        error: error.message,
+        errorCode: "INVALID_ORDER_ITEMS",
+        customerMessage:
+          error.code === "BOOKING_IN_PAST"
+            ? "That date and time is in the past. Please pick a future slot."
+            : "I need a valid date, time, party size, name and phone number to book the table.",
+      };
+    }
+    return cartFailure(context, error);
+  }
+}
+
 export async function runTool(
   name: string,
   rawArgs: unknown,
@@ -651,6 +858,12 @@ export async function runTool(
       return runCreateOrder(args, context);
     case "get_order_status":
       return runGetOrderStatus(args, context);
+    case "recommend_items":
+      return runRecommendItems(args, context);
+    case "get_order_history":
+      return runOrderHistory(args, context);
+    case "create_booking":
+      return runCreateBooking(args, context);
     case "handoff_to_staff":
       return runHandoffToStaff(args, context);
     default:

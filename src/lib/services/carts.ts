@@ -418,6 +418,9 @@ export async function submitCart(input: {
   customerPhone?: string;
   address?: string;
   notes?: string;
+  /** Item ids the assistant recommended in this turn (for attribution). */
+  recommendedItemIds?: string[];
+  customerId?: string | null;
 }): Promise<{
   orderId: string;
   orderNumber: string;
@@ -494,6 +497,11 @@ export async function submitCart(input: {
       idempotencyKey,
       channel: input.channel,
       currency: input.currency,
+      attribution: {
+        recommendedItemIds: input.recommendedItemIds ?? [],
+        customerId: input.customerId ?? null,
+        cartId: input.cartId,
+      },
     });
 
     await tenantDoc(input.tenantId, "carts", input.cartId).set(

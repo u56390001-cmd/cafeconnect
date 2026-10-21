@@ -60,6 +60,12 @@ export interface CreateOrderInput {
   currency?: string;
   /** Quotes may be produced before the customer gives an address. */
   requireAddress?: boolean;
+  /** Attribution data (which items were recommended, which customer). */
+  attribution?: {
+    recommendedItemIds?: string[];
+    customerId?: string | null;
+    cartId?: string;
+  };
   /**
    * When true, the delivery-area rule is enforced against the tenant's
    * configured areas. When the tenant has no rule configured the order is
@@ -200,6 +206,12 @@ export async function quoteOrder(input: {
   currency?: string;
   /** Quotes may be produced before the customer gives an address. */
   requireAddress?: boolean;
+  /** Attribution data (which items were recommended, which customer). */
+  attribution?: {
+    recommendedItemIds?: string[];
+    customerId?: string | null;
+    cartId?: string;
+  };
 }): Promise<QuoteResult> {
   if (!Array.isArray(input.items) || input.items.length === 0) {
     throw new OrderError("INVALID_ORDER_ITEMS", "Invalid order items");
@@ -700,6 +712,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     },
     notes: typeof input.notes === "string" ? input.notes.slice(0, 500) : "",
     idempotencyKey: input.idempotencyKey,
+    attribution: input.attribution ?? null,
     createdBy: "storefront",
     createdAt: new Date(),
     updatedAt: new Date(),

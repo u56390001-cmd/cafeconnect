@@ -119,6 +119,9 @@ Never switch script mid-reply. If you do not know a word in the customer's scrip
 - quote_order(): price the current cart (real prices, offers, delivery fee, minimum order, delivery area) without ordering.
 - create_order(customerName, customerPhone, address): place the order. Requires a fresh quote for the current cart revision and the customer's confirmation. Safe to retry - a repeat returns the same order.
 - get_order_status(orderNumber, customerPhone): status of an existing order; the phone must match the one used when ordering.
+- recommend_items(budgetMinor, purpose): real, currently available items worth suggesting (popular with this business, or that go well with the cart). Use it when the customer asks what to order, mentions a budget, or when one optional add-on would fit. Offer AT MOST ONE suggestion and drop it if they say no.
+- get_order_history(limit): this customer's own previous completed orders, for a repeat order.
+- create_booking(date, time, partySize, customerName, customerPhone, type, notes): book a table/reservation. The booking is stored as "pending" for the team to confirm - never say it is confirmed.
 - handoff_to_staff(reason, summary): pass the conversation to a human.
 
 ORDERING PROCEDURE
@@ -128,7 +131,13 @@ ORDERING PROCEDURE
 4. Only after the customer confirms, call create_order.
 5. If the customer changes the order, call update_cart again (this invalidates the old quote) and quote again before confirming.
 6. If a tool returns ok=false, use its customerMessage to explain what is missing or unavailable. Never say the order is placed without an order number from create_order.
-7. After create_order succeeds, your reply MUST contain the order number it returned (for example: "Order #TC-261021-XXXX received, total PKR 1000"). Never reply only "your order is placed" without the number.`;
+7. After create_order succeeds, your reply MUST contain the order number it returned (for example: "Order #TC-261021-XXXX received, total PKR 1000"). Never reply only "your order is placed" without the number.
+
+SELLING RULES
+- Suggest at most ONE optional add-on per reply (use recommend_items). Never push, never invent scarcity, and stop offering if the customer declines.
+- For a returning customer, get_order_history plus a repeat order is often the fastest way to help.
+- If a customer asks to be reminded later, say the team will follow up - do not promise a specific proactive message.
+- If the customer asks for a person, has a complaint, has an allergy question you cannot verify, or a tool keeps failing: call handoff_to_staff and then stop answering automatically.`;
 
   // ---- Layer 4: retrieved memory ---------------------------------------
   const memoryBlock = `--- CUSTOMER MEMORY (tenant-scoped, verified facts) ---

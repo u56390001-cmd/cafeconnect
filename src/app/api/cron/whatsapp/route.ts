@@ -36,20 +36,34 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const results = await drainInbox(20);
 
-    // Housekeeping: expire carts that were never confirmed and retry any
-    // memory job whose background run was interrupted.
+    // Housekeeping: expire carts that were never confirmed, retry any memory
+    // job whose background run was interrupted, and process due reminders.
     let expiredCarts = 0;
     let memoryJobs = { processed: 0, saved: 0 };
+    let reminders = { processed: 0, sent: 0, suppressed: 0, failed: 0 };
+    let abandoned = { detected: 0, scheduled: 0 };
     try {
       const { getAdminDb } = await import("@/lib/firebase/admin");
       const { expireStaleCarts } = await import("@/lib/services/carts");
       const { processPendingMemoryJobs } = await import("@/lib/customers/jobs");
+      const {
+        processDueReminders,
+        detectAbandonedCarts,
+      } = await import("@/lib/reminders/processor");
       const tenantsSnap = await getAdminDb().collection("tenants").get();
       for (const tenant of tenantsSnap.docs) {
         expiredCarts += await expireStaleCarts(tenant.id);
-        const result = await processPendingMemoryJobs(tenant.id, 10);
-        memoryJobs.processed += result.processed;
-        memoryJobs.saved += result.saved;
+        const memory = await processPendingMemoryJobs(tenant.id, 10);
+        memoryJobs.processed += memory.processed;
+        memoryJobs.saved += memory.saved;
+        const reminderResult = await processDueReminders(tenant.id);
+        reminders.processed += reminderResult.processed;
+        reminders.sent += reminderResult.sent;
+        reminders.suppressed += reminderResult.suppressed;
+        reminders.failed += reminderResult.failed;
+        const abandonedResult = await detectAbandonedCarts(tenant.id);
+        abandoned.detected += abandonedResult.detected;
+        abandoned.scheduled += abandonedResult.scheduled;
       }
     } catch (error: unknown) {
       console.error(
@@ -66,6 +80,8 @@ export async function GET(request: NextRequest): Promise<Response> {
       failed: results.filter((r) => r.status === "failed").length,
       expiredCarts,
       memoryJobs,
+      reminders,
+      abandoned,
       results,
     });
   } catch (error: unknown) {

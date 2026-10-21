@@ -365,6 +365,7 @@ export async function respondToCustomer(options: {
     currency: context.currency,
     languageMode,
     cartId: await resolveCartId(tenantId, conversationId, channel, customerReference),
+    customerId,
   };
 
   let reply: string | undefined;
@@ -372,7 +373,9 @@ export async function respondToCustomer(options: {
   const toolState: {
     order: { orderNumber: string; totalLabel?: string } | null;
     lastErrorMessage: string | null;
-  } = { order: null, lastErrorMessage: null };
+    recommendedItemIds: string[];
+    orderId: string | null;
+  } = { order: null, lastErrorMessage: null, recommendedItemIds: [], orderId: null };
 
   const captureToolOutcome = (
     name: string,
@@ -391,6 +394,21 @@ export async function respondToCustomer(options: {
           ? String(outcome.data.totalLabel)
           : undefined,
       };
+      toolState.orderId = outcome.data.orderId
+        ? String(outcome.data.orderId)
+        : null;
+      return;
+    }
+    if (name === "recommend_items" && outcome.ok) {
+      const list = Array.isArray(outcome.data?.recommendations)
+        ? (outcome.data?.recommendations as Array<{ itemId?: unknown }>)
+        : [];
+      const ids = list
+        .map((item) => String(item.itemId ?? ""))
+        .filter(Boolean);
+      if (ids.length) {
+        toolState.recommendedItemIds = ids;
+      }
       return;
     }
     if (!outcome.ok) {
@@ -519,6 +537,25 @@ export async function respondToCustomer(options: {
     state.lastOrderNumber = toolState.order.orderNumber;
     state.lastVerifiedQuote = toolState.order.totalLabel ?? null;
     state.cartRevision += 1;
+
+    // Attribution: which recommended items actually made it into the order.
+    if (toolState.recommendedItemIds.length > 0 && toolState.orderId) {
+      try {
+        await tenantCollection(tenantId, "orders")
+          .doc(toolState.orderId)
+          .set(
+            {
+              attribution: {
+                recommendedItemIds: toolState.recommendedItemIds,
+                customerId,
+              },
+            },
+            { merge: true }
+          );
+      } catch {
+        // attribution is best effort
+      }
+    }
   }
   await persistState(tenantId, conversationId, state, PROMPT_VERSION);
 

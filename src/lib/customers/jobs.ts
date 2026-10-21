@@ -165,6 +165,27 @@ async function extractAndSave(
     return saved;
   }
 
+  // 1b) Reminder consent: "remind me later" (opt in) / "stop messages" (opt out).
+  if (
+    /\b(stop (messaging|messages|reminders|notifications)|no more messages|baat mat karo|messages band karo|reminder band)\b/i.test(
+      message
+    )
+  ) {
+    await profileRef.set(
+      { reminderConsent: false, optedOut: true, updatedAt: new Date() },
+      { merge: true }
+    );
+    saved.push("reminder_opt_out");
+    return saved;
+  }
+  if (/\b(remind me|notify me|reminder bhejo|mujhe yaad dila do)\b/i.test(message)) {
+    await profileRef.set(
+      { reminderConsent: true, optedOut: false, updatedAt: new Date() },
+      { merge: true }
+    );
+    saved.push("reminder_opt_in");
+  }
+
   // 2) Preferred name: "my name is X", "mera naam X hai", "I'm X".
   const nameMatch = message.match(
     /\b(?:my name is|this is|i am|i'm|mera naam|mera name|name is)\s+([A-Za-z][A-Za-z .'-]{1,40})/i
