@@ -174,7 +174,12 @@ export async function respondToCustomer(options: {
       temperature: 0.6,
       maxOutputTokens: 700,
     });
-  } catch {
+  } catch (error: unknown) {
+    console.error(
+      `[ai-error] scope=respondToCustomer tenant=${tenantId} message=${
+        error instanceof Error ? error.message.slice(0, 200) : "unknown"
+      }`
+    );
     reply =
       "Sorry, the AI assistant is temporarily unavailable. Please try again in a minute, or contact the business directly.";
     await addMessage(tenantId, conversationId, {

@@ -56,7 +56,10 @@ export async function generateGeminiText({
     } catch (error: unknown) {
       lastError = error;
       const message = error instanceof Error ? error.message : "";
-      if (/quota|API key|permission|not found/i.test(message)) {
+      console.error(
+        `[ai-error] model=${model} attempt=${attempt + 1} message=${message.slice(0, 200)}`
+      );
+      if (/quota|API key|permission|not found|API_KEY_INVALID|400/i.test(message)) {
         throw new GeminiUnavailableError("AIServiceUnavailable");
       }
       // 503 / "overloaded" / network → retry
