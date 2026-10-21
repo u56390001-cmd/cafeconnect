@@ -10,6 +10,8 @@ interface StreamBody {
   message?: string;
   conversationId?: string;
   customerReference?: string;
+  /** Stable first-party visitor id (never the IP). */
+  visitorId?: string;
 }
 
 /**
@@ -35,7 +37,6 @@ export async function POST(request: NextRequest): Promise<Response> {
       headers: { "Content-Type": "application/json" },
     });
   }
-
   const publicWidgetId = String(body.publicWidgetId ?? "").trim();
   const message = String(body.message ?? "").trim();
 
@@ -77,6 +78,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           message,
           conversationId: body.conversationId,
           customerReference: body.customerReference,
+          identity: body.visitorId || body.customerReference || undefined,
           onDelta: (chunk) => send({ type: "delta", text: chunk }),
         });
 

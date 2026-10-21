@@ -64,6 +64,8 @@ async function processQrEvent(event: InboxEvent): Promise<ProcessResult> {
       channel: "whatsapp_qr",
       message: event.text,
       customerReference: event.customerReference,
+      // Verified WhatsApp number is the durable identity (never the IP).
+      identity: event.customerReference,
     });
   } finally {
     clearTimeout(ackTimer);

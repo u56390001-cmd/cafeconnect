@@ -13,7 +13,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       return createApiError("Too many requests, please slow down", 429);
     }
 
-    const { publicWidgetId, message, conversationId, customerReference } =
+    const { publicWidgetId, message, conversationId, customerReference, visitorId } =
       await request.json();
 
     if (!publicWidgetId || !message) {
@@ -24,6 +24,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
     if (conversationId && typeof conversationId !== "string") {
       return createApiError("Invalid conversationId", 400);
+    }
+    if (visitorId && (typeof visitorId !== "string" || visitorId.length > 128)) {
+      return createApiError("Invalid visitorId", 400);
     }
 
     const config = await resolveWidget(publicWidgetId);
@@ -37,6 +40,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       message,
       conversationId: conversationId || undefined,
       customerReference: customerReference || `web:${ip}`,
+      // Stable first-party identity (falls back to the reference when a client
+      // does not send one).
+      identity: visitorId || customerReference || undefined,
     });
 
     return createApiResponse({

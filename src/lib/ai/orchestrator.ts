@@ -207,6 +207,8 @@ export async function respondToCustomer(options: {
   message: string;
   conversationId?: string;
   customerReference?: string;
+  /** Stable first-party visitor id (web) or verified phone (WhatsApp). */
+  identity?: string;
   onDelta?: (chunk: string) => void;
 }): Promise<OutboundReply> {
   const requestId = randomUUID();
@@ -287,6 +289,41 @@ export async function respondToCustomer(options: {
     content: message,
   });
 
+  // --- Customer identity + memory (Phase 3) ----------------------------
+  const identityChannel =
+    channel === "web" ? "web" : channel === "whatsapp_qr" ? "whatsapp_qr" : "whatsapp_meta";
+  const identityValue =
+    options.identity?.trim() ||
+    (channel === "web" ? customerReference : customerReference);
+
+  let customerId: string | null = null;
+  let memoryBlock = "(no memory: memory is disabled or not permitted for this customer)";
+  if (identityValue) {
+    try {
+      const { resolveCustomer } = await import("@/lib/customers/identity");
+      const { listMemories, renderMemoryBlock, memoryEnabled } = await import(
+        "@/lib/customers/memory"
+      );
+      const resolved = await resolveCustomer({
+        tenantId,
+        channel: identityChannel,
+        identifier: identityValue,
+      });
+      customerId = resolved.customerId;
+      if (memoryEnabled(resolved.profile)) {
+        const memories = await listMemories(tenantId, resolved.customerId);
+        memoryBlock = renderMemoryBlock(resolved.profile, memories);
+      }
+    } catch (error: unknown) {
+      // Memory must never block a customer turn.
+      console.error(
+        `[ai-error] scope=resolveCustomer tenant=${tenantId} message=${
+          error instanceof Error ? error.message.slice(0, 120) : "unknown"
+        }`
+      );
+    }
+  }
+
   const prompt = buildGroundedPrompt(context, [
     ...history,
     { role: "user", content: message },
@@ -295,6 +332,7 @@ export async function respondToCustomer(options: {
     conversationStatus: status,
     stateSummary: buildStateBlock(state),
     cartSummary: buildCartSummary(state, cart),
+    memorySummary: memoryBlock,
   });
   const promptReadyAt = Date.now();
 
@@ -486,6 +524,32 @@ export async function respondToCustomer(options: {
 
   metrics.stages.totalMs = Date.now() - startedAt;
   await persistTurnMetrics(tenantId, conversationId, requestId, metrics);
+
+  // Durable memory extraction: queued now, processed in the background and
+  // retried by the cron worker if needed. It never delays the reply.
+  if (customerId) {
+    try {
+      const { enqueueMemoryJob } = await import("@/lib/customers/jobs");
+      const jobId = await enqueueMemoryJob({
+        tenantId,
+        customerId,
+        conversationId,
+        channel,
+        customerMessage: message,
+        assistantMessage: reply,
+      });
+      if (jobId) {
+        const { processMemoryJob } = await import("@/lib/customers/jobs");
+        void processMemoryJob(tenantId, jobId).catch(() => undefined);
+      }
+    } catch (error: unknown) {
+      console.error(
+        `[ai-error] scope=enqueueMemoryJob tenant=${tenantId} message=${
+          error instanceof Error ? error.message.slice(0, 120) : "unknown"
+        }`
+      );
+    }
+  }
 
   console.log(
     `[ai-timing] requestId=${requestId} tenant=${tenantId} channel=${channel} lang=${languageMode} model=${

@@ -48,6 +48,29 @@ export function ChatWidget({
   const scroller = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const streamingIndexRef = useRef<number | null>(null);
+  const visitorIdRef = useRef<string | null>(null);
+
+  /**
+   * Stable first-party visitor id (Phase 3). The durable customer identity is
+   * this random id - never the IP address.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storageKey = "cc_visitor_id";
+    let visitorId = window.localStorage.getItem(storageKey);
+    if (!visitorId) {
+      visitorId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `v_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+      try {
+        window.localStorage.setItem(storageKey, visitorId);
+      } catch {
+        // storage may be unavailable (private mode) - the chat still works
+      }
+    }
+    visitorIdRef.current = visitorId;
+  }, []);
 
   const key = publicWidgetId?.trim() ?? "";
 
@@ -116,6 +139,7 @@ export function ChatWidget({
             publicWidgetId: key,
             message: content,
             conversationId: conversationId ?? undefined,
+            visitorId: visitorIdRef.current ?? undefined,
           }),
         });
 

@@ -15,6 +15,8 @@ export interface PromptOptions {
   stateSummary?: string;
   /** Active cart summary (items, revision, current quote). */
   cartSummary?: string;
+  /** Retrieved customer memory (preferences, saved facts). */
+  memorySummary?: string;
 }
 
 export function buildGroundedPrompt(
@@ -128,9 +130,9 @@ ORDERING PROCEDURE
 6. If a tool returns ok=false, use its customerMessage to explain what is missing or unavailable. Never say the order is placed without an order number from create_order.
 7. After create_order succeeds, your reply MUST contain the order number it returned (for example: "Order #TC-261021-XXXX received, total PKR 1000"). Never reply only "your order is placed" without the number.`;
 
-  // ---- Layer 4: retrieved memory (Phase 3 placeholder) ---------------
-  const memoryBlock =
-    "--- CUSTOMER MEMORY ---\n(no saved customer memory yet)";
+  // ---- Layer 4: retrieved memory ---------------------------------------
+  const memoryBlock = `--- CUSTOMER MEMORY (tenant-scoped, verified facts) ---
+${options.memorySummary ?? "(no memory yet)"}`;
 
   return `${core}
 
