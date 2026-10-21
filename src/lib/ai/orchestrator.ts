@@ -254,11 +254,18 @@ export async function respondToCustomer(options: {
   let streamedAny = false;
   const toolState: {
     order: { orderNumber: string; totalLabel?: string } | null;
-  } = { order: null };
+    lastErrorMessage: string | null;
+  } = { order: null, lastErrorMessage: null };
 
   const captureToolOutcome = (
     name: string,
-    outcome: { ok: boolean; data?: Record<string, unknown>; error?: string }
+    outcome: {
+      ok: boolean;
+      data?: Record<string, unknown>;
+      error?: string;
+      errorCode?: string;
+      customerMessage?: string;
+    }
   ) => {
     if (name === "create_order" && outcome.ok && outcome.data?.orderNumber) {
       toolState.order = {
@@ -267,6 +274,16 @@ export async function respondToCustomer(options: {
           ? String(outcome.data.totalLabel)
           : undefined,
       };
+      return;
+    }
+    if (!outcome.ok) {
+      const message =
+        outcome.customerMessage ??
+        (typeof outcome.data?.customerMessage === "string"
+          ? (outcome.data?.customerMessage as string)
+          : null);
+      toolState.lastErrorMessage =
+        typeof message === "string" && message.trim() ? message : null;
     }
   };
 
@@ -325,7 +342,7 @@ export async function respondToCustomer(options: {
           toolState.order.orderNumber,
           toolState.order.totalLabel ?? ""
         )} ${strings.orderConfirmCall}`
-      : strings.aiUnavailable;
+      : toolState.lastErrorMessage ?? strings.aiUnavailable;
     await addMessage(tenantId, conversationId, {
       direction: "outbound",
       senderType: "system",

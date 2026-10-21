@@ -370,7 +370,12 @@ export async function generateGeminiTextWithTools({
                 name: callPart.functionCall!.name,
                 response: outcome.ok
                   ? { ok: true, ...(outcome.data ?? {}) }
-                  : { ok: false, error: outcome.error ?? "Tool failed" },
+                  : {
+                      ok: false,
+                      error: outcome.error ?? "Tool failed",
+                      errorCode: outcome.errorCode ?? undefined,
+                      customerMessage: outcome.customerMessage ?? undefined,
+                    },
               },
             } as unknown as RestPart,
           ],
@@ -480,7 +485,12 @@ export async function generateGeminiTextWithToolsStream({
                 name: callPart.functionCall!.name,
                 response: outcome.ok
                   ? { ok: true, ...(outcome.data ?? {}) }
-                  : { ok: false, error: outcome.error ?? "Tool failed" },
+                  : {
+                      ok: false,
+                      error: outcome.error ?? "Tool failed",
+                      errorCode: outcome.errorCode ?? undefined,
+                      customerMessage: outcome.customerMessage ?? undefined,
+                    },
               },
             } as unknown as RestPart,
           ],
@@ -552,5 +562,6 @@ export async function generateGeminiText({
     lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
   );
 }
+
 
 
