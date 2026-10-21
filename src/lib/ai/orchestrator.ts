@@ -147,7 +147,7 @@ export async function respondToCustomer(options: {
     content: message,
   });
 
-  const context: TenantAiContext = await loadTenantAiContext(tenantId);
+  const context: TenantAiContext = await loadTenantAiContext(tenantId, message);
   const prompt = buildGroundedPrompt(context, [
     ...history,
     { role: "user", content: message },

@@ -11,6 +11,7 @@ import {
 } from "@/components/settings/WhatsappModeCard";
 import { WidgetEmbedCard } from "@/components/settings/WidgetEmbedCard";
 import { QrTrialCard } from "@/components/settings/QrTrialCard";
+import { BusinessProfileCard } from "@/components/settings/BusinessProfileCard";
 
 interface ApiKeySummary {
   keyId: string;
@@ -194,6 +195,8 @@ export default function SettingsPage() {
       )}
 
       <div className="flex max-w-2xl flex-col gap-6">
+        <BusinessProfileCard tenantId={tenantId} />
+
         <ApiKeyCard
           title="Gemini AI Key"
           description="Used by the shared AI engine for both chat channels."
