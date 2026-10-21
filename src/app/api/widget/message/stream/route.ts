@@ -80,7 +80,12 @@ export async function POST(request: NextRequest): Promise<Response> {
           onDelta: (chunk) => send({ type: "delta", text: chunk }),
         });
 
-        send({ type: "done", conversationId: result.conversationId });
+        send({
+          type: "done",
+          conversationId: result.conversationId,
+          languageMode: result.languageMode,
+          requestId: result.requestId,
+        });
       } catch (error: unknown) {
         send({
           type: "error",

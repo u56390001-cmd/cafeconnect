@@ -42,6 +42,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     return createApiResponse({
       reply: result.reply,
       conversationId: result.conversationId,
+      languageMode: result.languageMode,
+      requestId: result.requestId,
+      suppressed: result.suppressed ?? false,
     });
   } catch (error: unknown) {
     return handleApiError("api/widget/message", error);
