@@ -69,5 +69,6 @@ export async function decrypt(
 
 export function maskHint(value: string): string {
   if (!value || value.length < 8) return "••••••••";
-  return `••••••${value.slice(-4)}`;
+  const tail = value.slice(-4).replace(/[^\w]/g, "");
+  return tail ? `••••••${tail}` : "••••••••";
 }
