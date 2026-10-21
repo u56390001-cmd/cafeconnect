@@ -61,8 +61,8 @@ export interface TenantAiContext {
   knowledge: KnowledgeContext[];
 }
 
-const MAX_KNOWLEDGE_ITEMS = 6;
-const MAX_KNOWLEDGE_CHARS = 600;
+const MAX_KNOWLEDGE_ITEMS = 4;
+const MAX_KNOWLEDGE_CHARS = 320;
 const MAX_ITEMS = 60;
 const CONTEXT_CACHE_TTL_MS = 60_000;
 

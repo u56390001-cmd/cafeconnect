@@ -45,7 +45,7 @@ export function modelCandidates(): string[] {
 }
 
 const MODEL_TIMEOUT_MS = 9_000;
-const STREAM_TIMEOUT_MS = 20_000;
+const STREAM_TIMEOUT_MS = 18_000;
 
 class ModelTimeoutError extends Error {
   constructor() {
@@ -365,7 +365,6 @@ export async function generateGeminiTextWithToolsStream({
           if (!text.trim()) throw new Error("Empty AI response");
           return text.trim();
         }
-
         contents.push({ role: "model", parts: [callPart] });
 
         const outcome = await runTool(
@@ -397,6 +396,9 @@ export async function generateGeminiTextWithToolsStream({
       console.error(
         `[ai-error] scope=tool-call-stream model=${candidate} message=${message.slice(0, 180)}`
       );
+      // If text was already streamed, do not retry with another model: the
+      // customer would receive the same answer twice.
+      if (text.trim()) return text.trim();
       if (!isRetryableMessage(message)) break;
     }
   }
