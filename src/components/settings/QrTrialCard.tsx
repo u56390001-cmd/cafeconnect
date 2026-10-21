@@ -23,6 +23,7 @@ interface QrTrialState {
   messagesUsed: number;
   messageQuota: number;
   lastHealthCheckAt: string | null;
+  qr: string | null;
 }
 
 interface QrTrialResponse {
@@ -42,6 +43,11 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "dest
   expired: "destructive",
   error: "destructive",
 };
+
+function qrImageSource(qr: string): string {
+  if (qr.startsWith("data:") || qr.startsWith("http")) return qr;
+  return `data:image/png;base64,${qr}`;
+}
 
 export function QrTrialCard({ tenantId }: { tenantId: string }) {
   const [state, setState] = useState<QrTrialState | null>(null);
@@ -160,10 +166,25 @@ export function QrTrialCard({ tenantId }: { tenantId: string }) {
                 <QrCode className="size-4" />
                 <AlertTitle>Scan required</AlertTitle>
                 <AlertDescription>
-                  Open the provider dashboard, generate the QR code, and scan it
-                  with WhatsApp on your phone. Then press Refresh status.
+                  {state.qr
+                    ? "Scan this QR code with WhatsApp on your phone to link your number, then press Refresh status."
+                    : "Open the provider dashboard, generate the QR code, and scan it with WhatsApp on your phone. Then press Refresh status."}
                 </AlertDescription>
               </Alert>
+            )}
+
+            {state?.qr && (
+              <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-background p-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={qrImageSource(state.qr)}
+                  alt="WhatsApp QR code to link your number"
+                  className="size-56 rounded-md bg-white p-2 object-contain"
+                />
+                <p className="text-xs text-muted-foreground">
+                  QR codes expire quickly. Refresh if it stops working.
+                </p>
+              </div>
             )}
 
             {state?.status === "expired" && (

@@ -27,6 +27,7 @@ export interface QrTrialState {
   lastHealthCheckAt: string | null;
   provider: string;
   mode: string;
+  qr: string | null;
 }
 
 function providerToken(): string {
@@ -42,10 +43,11 @@ export function qrProviderConfigured(): boolean {
 }
 
 export function webhookPublicUrl(): string {
-  const base =
+  const base = (
     process.env.NEXT_PUBLIC_APP_URL ||
     process.env.QR_PROVIDER_WEBHOOK_BASE_URL ||
-    "";
+    ""
+  ).trim();
   if (!base) {
     throw new Error("Missing NEXT_PUBLIC_APP_URL for webhook registration");
   }
@@ -67,6 +69,7 @@ export async function readQrTrialState(tenantId: string): Promise<QrTrialState> 
     lastHealthCheckAt: (trial.lastHealthCheckAt as string) ?? null,
     provider: (data?.provider as string) ?? "qr_provider",
     mode: (data?.mode as string) ?? "qr_trial",
+    qr: (trial.qr as string) ?? null,
   };
 }
 
@@ -88,6 +91,7 @@ export async function startQrTrial(
     lastHealthCheckAt: now.toISOString(),
     provider: "qr_provider",
     mode: "qr_trial",
+    qr: null,
   };
 
   await tenantDoc(tenantId, "settings", "whatsapp").set(
@@ -142,6 +146,7 @@ export async function refreshQrTrialConnection(
     status,
     linkedPhone: session.phone ?? current.linkedPhone,
     lastHealthCheckAt: now.toISOString(),
+    qr: session.qr ?? null,
   };
 
   await persistTrialState(tenantId, next);

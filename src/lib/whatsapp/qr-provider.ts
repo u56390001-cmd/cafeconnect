@@ -8,6 +8,9 @@ export type QrSessionStatus =
 export interface QrSessionInfo {
   status: QrSessionStatus;
   phone: string | null;
+  qr: string | null;
+  webhook: string | null;
+  message: string | null;
 }
 
 export interface QrSendResult {
@@ -87,12 +90,18 @@ export async function getQrSession(token: string): Promise<QrSessionInfo> {
   const data = (await res.json()) as {
     status?: string;
     phone?: string | null;
+    qr?: string | null;
+    webhook?: string | null;
+    message?: string | null;
   };
 
   const status = (data.status ?? "disconnected") as QrSessionStatus;
   return {
     status,
     phone: data.phone ? normalizePhone(data.phone) : null,
+    qr: data.qr ?? null,
+    webhook: data.webhook ?? null,
+    message: data.message ?? null,
   };
 }
 
