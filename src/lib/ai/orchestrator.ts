@@ -198,6 +198,24 @@ export async function respondToCustomer(options: {
   };
 
   let reply: string | undefined;
+  const toolState: {
+    order: { orderNumber: string; totalLabel?: string } | null;
+  } = { order: null };
+
+  const captureToolOutcome = (
+    name: string,
+    outcome: { ok: boolean; data?: Record<string, unknown>; error?: string }
+  ) => {
+    if (name === "create_order" && outcome.ok && outcome.data?.orderNumber) {
+      toolState.order = {
+        orderNumber: String(outcome.data.orderNumber),
+        totalLabel: outcome.data.totalLabel
+          ? String(outcome.data.totalLabel)
+          : undefined,
+      };
+    }
+  };
+
   for (const apiKey of candidateKeys) {
     try {
       if (onDelta) {
@@ -208,6 +226,7 @@ export async function respondToCustomer(options: {
           tools: toolDeclarations,
           toolContext,
           onDelta,
+          onToolOutcome: captureToolOutcome,
         });
       } else {
         reply = await generateGeminiTextWithTools({
@@ -216,6 +235,7 @@ export async function respondToCustomer(options: {
           prompt,
           tools: toolDeclarations,
           toolContext,
+          onToolOutcome: captureToolOutcome,
         });
       }
       break;
@@ -231,8 +251,13 @@ export async function respondToCustomer(options: {
   const modelDoneAt = Date.now();
 
   if (reply === undefined) {
-    reply =
-      "Sorry, the AI assistant is temporarily unavailable. Please try again in a minute, or contact the business directly.";
+    // If the order was actually created before the reply failed, the customer
+    // must still be told the real order number (never a false success).
+    reply = toolState.order
+      ? `Aapka order #${toolState.order.orderNumber} receive ho gaya hai${
+          toolState.order.totalLabel ? `, total ${toolState.order.totalLabel}` : ""
+        }. Hamari team 10 minutes mein phone par order confirm karegi.`
+      : "Sorry, the AI assistant is temporarily unavailable. Please try again in a minute, or contact the business directly.";
     await addMessage(tenantId, conversationId, {
       direction: "outbound",
       senderType: "system",

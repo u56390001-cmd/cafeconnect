@@ -194,6 +194,7 @@ export async function generateGeminiTextWithTools({
   toolContext,
   temperature = 0.5,
   maxOutputTokens = 400,
+  onToolOutcome,
 }: {
   apiKey: string;
   model?: string;
@@ -206,6 +207,7 @@ export async function generateGeminiTextWithTools({
   toolContext: ToolContext;
   temperature?: number;
   maxOutputTokens?: number;
+  onToolOutcome?: (name: string, outcome: { ok: boolean; data?: Record<string, unknown>; error?: string }) => void;
 }): Promise<string> {
   const candidates = modelCandidates().includes(model ?? "")
     ? modelCandidates()
@@ -246,6 +248,7 @@ export async function generateGeminiTextWithTools({
           callPart.functionCall!.args,
           toolContext
         );
+        onToolOutcome?.(callPart.functionCall!.name, outcome);
 
         contents.push({
           role: "user",
@@ -291,6 +294,7 @@ export async function generateGeminiTextWithToolsStream({
   temperature = 0.5,
   maxOutputTokens = 400,
   onDelta,
+  onToolOutcome,
 }: {
   apiKey: string;
   model?: string;
@@ -304,6 +308,7 @@ export async function generateGeminiTextWithToolsStream({
   temperature?: number;
   maxOutputTokens?: number;
   onDelta: (chunk: string) => void;
+  onToolOutcome?: (name: string, outcome: { ok: boolean; data?: Record<string, unknown>; error?: string }) => void;
 }): Promise<string> {
   const candidates = modelCandidates().includes(model ?? "")
     ? modelCandidates()
@@ -347,6 +352,7 @@ export async function generateGeminiTextWithToolsStream({
           callPart.functionCall!.args,
           toolContext
         );
+        onToolOutcome?.(callPart.functionCall!.name, outcome);
 
         contents.push({
           role: "user",
