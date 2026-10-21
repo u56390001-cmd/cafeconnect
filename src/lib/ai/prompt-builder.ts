@@ -52,7 +52,11 @@ export function buildGroundedPrompt(
           item.availability !== "available"
             ? ` (currently ${item.availability})`
             : ""
-        }${item.description ? ` — ${item.description}` : ""}`
+        }${item.description ? ` — ${item.description}` : ""}${
+          item.aliases.length > 0
+            ? ` (also called: ${item.aliases.join(", ")})`
+            : ""
+        }`
     )
     .join("\n");
 

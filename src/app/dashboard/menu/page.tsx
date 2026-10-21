@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, authFetch } from "@/context/AuthContext";
@@ -30,6 +30,7 @@ interface MenuItem {
   basePriceMinor: number;
   availability: string;
   publicationStatus: string;
+  aliases: string[];
 }
 
 const AVAILABILITY_OPTIONS = ["available", "soldOut", "paused"];
@@ -47,6 +48,7 @@ function MenuPage() {
     categoryId: "",
     price: "",
     description: "",
+    aliases: "",
     availability: "available",
   });
   const [saving, setSaving] = useState(false);
@@ -118,6 +120,10 @@ function MenuPage() {
       categoryId: form.categoryId,
       name: form.name,
       description: form.description,
+      aliases: form.aliases
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
       basePriceMinor: priceMinor,
       availability: form.availability,
       publicationStatus: items.find((i) => i.itemId === editId)?.publicationStatus ?? "draft",
@@ -131,7 +137,7 @@ function MenuPage() {
         const err = await res.json().catch(() => null);
         setError(err?.error?.message ?? "Failed to save item");
       } else {
-        setForm({ name: "", categoryId: "", price: "", description: "", availability: "available" });
+        setForm({ name: "", categoryId: "", price: "", description: "", aliases: "", availability: "available" });
         setEditId(null);
         await load();
       }
@@ -168,6 +174,7 @@ function MenuPage() {
       categoryId: item.categoryId,
       price: (item.basePriceMinor / 100).toString(),
       description: item.description || "",
+      aliases: (item.aliases ?? []).join(", "),
       availability: item.availability,
     });
   }
@@ -198,7 +205,7 @@ function MenuPage() {
                     onClick={() => removeCategory(c.categoryId)}
                     className="text-muted-foreground hover:text-destructive"
                   >
-                    ×
+                    Ã—
                   </button>
                 </Badge>
               ))}
@@ -298,6 +305,22 @@ function MenuPage() {
                 placeholder="Short description shown to customers"
               />
             </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="itemAliases">
+                Search aliases / local names (comma separated)
+              </Label>
+              <Input
+                id="itemAliases"
+                value={form.aliases}
+                onChange={(e) => setForm({ ...form, aliases: e.target.value })}
+                placeholder="chai, doodh patti, karahi"
+              />
+              <p className="text-xs text-muted-foreground">
+                Customers type local names and spellings differently. These
+                aliases let the AI agent and menu search match them to this
+                item.
+              </p>
+            </div>
             {error && <p className="text-sm text-destructive sm:col-span-2">{error}</p>}
             <div className="flex gap-2 sm:col-span-2">
               <Button type="submit" disabled={saving}>
@@ -309,7 +332,7 @@ function MenuPage() {
                   variant="outline"
                   onClick={() => {
                     setEditId(null);
-                    setForm({ name: "", categoryId: "", price: "", description: "", availability: "available" });
+                    setForm({ name: "", categoryId: "", price: "", description: "", aliases: "", availability: "available" });
                   }}
                 >
                   Cancel
@@ -338,7 +361,7 @@ function MenuPage() {
                   <div className="min-w-0 flex-1">
                     <p className="font-medium truncate">{item.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {categoryName(item.categoryId)} · PKR {Math.round(item.basePriceMinor / 100)}
+                      {categoryName(item.categoryId)} Â· PKR {Math.round(item.basePriceMinor / 100)}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -384,3 +407,4 @@ function MenuPage() {
 export default function Page() {
   return <MenuPage />;
 }
+

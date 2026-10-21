@@ -37,6 +37,7 @@ function context(overrides: Partial<TenantAiContext> = {}): TenantAiContext {
           description: "Half portion",
           priceLabel: "PKR 350",
           availability: "available",
+          aliases: ["chicken biryani", "biryani"],
         },
         {
           itemId: "item-2",
@@ -45,6 +46,7 @@ function context(overrides: Partial<TenantAiContext> = {}): TenantAiContext {
           description: "",
           priceLabel: "PKR 450",
           availability: "soldOut",
+          aliases: [],
         },
       ],
     },

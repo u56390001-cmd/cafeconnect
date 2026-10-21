@@ -37,7 +37,51 @@ export async function GET(request: NextRequest): Promise<Response> {
         };
       });
 
-      return createApiResponse({ conversationId, messages });
+      // Per-turn AI metrics (model, latency stages, tool calls, prompt version)
+      // so the dashboard can show how each reply was produced.
+      const metricsSnap = await tenantCollection(tenantId, "conversations")
+        .doc(conversationId)
+        .collection("turnMetrics")
+        .orderBy("createdAt", "desc")
+        .limit(10)
+        .get();
+
+      const turnMetrics = metricsSnap.docs.map((doc) => {
+        const d = doc.data();
+        return {
+          requestId: d.requestId,
+          promptVersion: d.promptVersion,
+          channel: d.channel,
+          languageMode: d.languageMode,
+          model: d.model,
+          attempts: d.attempts ?? 0,
+          toolCalls: d.toolCalls ?? [],
+          fallbackUsed: d.fallbackUsed ?? false,
+          stages: d.stages ?? {},
+          createdAt: d.createdAt,
+        };
+      });
+
+      const conversationSnap = await tenantCollection(tenantId, "conversations")
+        .doc(conversationId)
+        .get();
+      const conversation = conversationSnap.data() ?? {};
+
+      return createApiResponse({
+        conversationId,
+        messages,
+        turnMetrics,
+        state: {
+          activeIntent: conversation.activeIntent ?? null,
+          missingOrderDetails: conversation.missingOrderDetails ?? [],
+          cartRevision: conversation.cartRevision ?? 0,
+          lastOrderNumber: conversation.lastOrderNumber ?? null,
+          lastVerifiedQuote: conversation.lastVerifiedQuote ?? null,
+          compactSummary: conversation.compactSummary ?? "",
+          stateVersion: conversation.stateVersion ?? 0,
+          lastPromptVersion: conversation.lastPromptVersion ?? null,
+        },
+      });
     }
 
     const snap = await tenantCollection(tenantId, "conversations").get();

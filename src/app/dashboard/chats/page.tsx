@@ -32,6 +32,35 @@ interface Message {
   createdAt: string;
 }
 
+interface TurnMetric {
+  requestId: string;
+  promptVersion: string;
+  channel: string;
+  languageMode: string;
+  model: string | null;
+  attempts: number;
+  toolCalls: Array<{ name: string; ok: boolean; ms: number }>;
+  fallbackUsed: boolean;
+  stages: {
+    historyAndContextMs?: number;
+    promptAssemblyMs?: number;
+    modelMs?: number;
+    totalMs?: number;
+  };
+  createdAt: string;
+}
+
+interface ConversationState {
+  activeIntent: string | null;
+  missingOrderDetails: string[];
+  cartRevision: number;
+  lastOrderNumber: string | null;
+  lastVerifiedQuote: string | null;
+  compactSummary: string;
+  stateVersion: number;
+  lastPromptVersion: string | null;
+}
+
 const statusVariant: Record<string, string> = {
   open: "bg-success/10 text-success border-success/30",
   waitingForHuman: "bg-warning/10 text-warning border-warning/30",
@@ -50,6 +79,8 @@ function ChatsPage() {
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [replyNotice, setReplyNotice] = useState("");
+  const [turnMetrics, setTurnMetrics] = useState<TurnMetric[]>([]);
+  const [state, setState] = useState<ConversationState | null>(null);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -80,6 +111,8 @@ function ChatsPage() {
         if (res.ok) {
           const data = await res.json();
           setMessages(data.data?.messages ?? []);
+          setTurnMetrics(data.data?.turnMetrics ?? []);
+          setState(data.data?.state ?? null);
         }
       } finally {
         setLoadingThread(false);
@@ -252,6 +285,30 @@ function ChatsPage() {
             <p className="text-sm text-muted-foreground">Loading messages...</p>
           ) : (
             <div className="space-y-2.5">
+              {state && (
+                <div className="rounded-md border border-border bg-muted/40 p-3 text-xs">
+                  <p className="font-semibold">Conversation state</p>
+                  <p className="text-muted-foreground">
+                    Intent: {state.activeIntent ?? "general"} · Cart revision:{" "}
+                    {state.cartRevision} · Prompt:{" "}
+                    {state.lastPromptVersion ?? "—"}
+                  </p>
+                  {state.missingOrderDetails.length > 0 && (
+                    <p className="text-muted-foreground">
+                      Still needed for an order:{" "}
+                      {state.missingOrderDetails.join(", ")}
+                    </p>
+                  )}
+                  {state.lastOrderNumber && (
+                    <p className="text-muted-foreground">
+                      Last order: {state.lastOrderNumber}
+                      {state.lastVerifiedQuote
+                        ? ` · ${state.lastVerifiedQuote}`
+                        : ""}
+                    </p>
+                  )}
+                </div>
+              )}
               {selectedConversation?.handoff && (
                 <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
                   <p className="font-semibold">
@@ -287,6 +344,24 @@ function ChatsPage() {
                     {m.senderType} · {new Date(m.createdAt).toLocaleTimeString()}
                   </p>
                 </div>
+              ))}
+            </div>
+          )}
+          {turnMetrics.length > 0 && (
+            <div className="rounded-md border border-border bg-muted/40 p-3 text-xs">
+              <p className="font-semibold">AI turn metrics (latest)</p>
+              {turnMetrics.slice(0, 5).map((m) => (
+                <p key={m.requestId} className="text-muted-foreground">
+                  {m.model ?? "no model"} · {m.languageMode} · total{" "}
+                  {m.stages.totalMs ?? 0}ms (model {m.stages.modelMs ?? 0}ms) ·
+                  attempts {m.attempts}
+                  {m.toolCalls.length > 0
+                    ? ` · tools: ${m.toolCalls
+                        .map((t) => `${t.name}${t.ok ? "✓" : "✗"}`)
+                        .join(", ")}`
+                    : ""}
+                  {m.fallbackUsed ? " · fallback used" : ""}
+                </p>
               ))}
             </div>
           )}

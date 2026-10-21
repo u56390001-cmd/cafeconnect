@@ -20,6 +20,7 @@ interface ItemPayload {
   categoryId: string;
   name: string;
   description?: string;
+  aliases?: string[];
   basePriceMinor: number;
   availability?: Availability;
   publicationStatus?: PublicationStatus;
@@ -73,6 +74,7 @@ export async function GET(request: NextRequest): Promise<Response> {
           categoryId: d.categoryId,
           name: d.name,
           description: d.description || "",
+          aliases: d.aliases ?? [],
           basePriceMinor: d.basePriceMinor ?? 0,
           availability: d.availability ?? "available",
           publicationStatus: d.publicationStatus ?? "draft",
@@ -105,6 +107,13 @@ export async function POST(request: NextRequest): Promise<Response> {
       categoryId: String(body.categoryId),
       name: String(body.name),
       description: typeof body.description === "string" ? body.description : undefined,
+      aliases: Array.isArray(body.aliases)
+        ? body.aliases
+            .filter((alias: unknown): alias is string => typeof alias === "string")
+            .map((alias: string) => alias.trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 20)
+        : [],
       basePriceMinor: Number(body.basePriceMinor),
     };
     const availability: Availability =
@@ -134,6 +143,13 @@ export async function POST(request: NextRequest): Promise<Response> {
       categoryId: validated.categoryId,
       name: validated.name.trim(),
       description: body.description?.trim() ?? "",
+      aliases: Array.isArray(body.aliases)
+        ? body.aliases
+            .filter((alias: unknown): alias is string => typeof alias === "string")
+            .map((alias: string) => alias.trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 20)
+        : [],
       basePriceMinor: body.basePriceMinor,
       availability,
       publicationStatus,
@@ -174,6 +190,15 @@ export async function PATCH(request: NextRequest): Promise<Response> {
       update.name = body.name.trim();
     }
     if (body.description !== undefined) update.description = body.description.slice(0, 1000);
+    if (body.aliases !== undefined) {
+      update.aliases = Array.isArray(body.aliases)
+        ? body.aliases
+            .filter((alias: unknown): alias is string => typeof alias === "string")
+            .map((alias: string) => alias.trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 20)
+        : [];
+    }
     if (body.categoryId !== undefined) {
       const categorySnap = await tenantDoc(
         body.tenantId,
@@ -248,4 +273,5 @@ export async function DELETE(request: NextRequest): Promise<Response> {
     return handleApiError("api/menu/items", error);
   }
 }
+
 

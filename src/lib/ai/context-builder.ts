@@ -13,6 +13,7 @@ export interface MenuContext {
     description: string;
     priceLabel: string;
     availability: string;
+    aliases: string[];
   }>;
 }
 
@@ -94,16 +95,20 @@ function tokenize(text: string): string[] {
 }
 
 function scoreKnowledge(
-  entry: { title: string; category: string; content: string },
-  queryTokens: string[]
+  entry: { title: string; category: string; content: string; language: string },
+  queryTokens: string[],
+  preferredLanguages: string[]
 ): number {
-  if (queryTokens.length === 0) return 0;
+  const languageBonus = preferredLanguages.includes(entry.language) ? 1.5 : 0;
+  if (queryTokens.length === 0) {
+    return languageBonus + (entry.category === "businessInfo" ? 0.5 : 0);
+  }
 
   const haystackTitle = tokenize(entry.title);
   const haystackBody = tokenize(entry.content);
   const haystack = new Set([...haystackTitle, ...haystackBody]);
 
-  let score = 0;
+  let score = languageBonus;
   for (const token of queryTokens) {
     if (haystackTitle.includes(token)) score += 3;
     else if (haystack.has(token)) score += 1;
@@ -119,6 +124,27 @@ function toTimestampMs(value: unknown): number {
   if (value instanceof Date) return value.getTime();
   if (typeof value === "string") return new Date(value).getTime();
   return 0;
+}
+
+/**
+ * Knowledge entries are stored with a language tag. The customer's message
+ * decides which language is preferred, with English always available as a
+ * fallback so the agent is never left without business facts.
+ */
+function languagePreferences(query?: string): string[] {
+  const preferences = ["en"];
+  if (!query) return preferences;
+
+  const hasUrduScript = /[\u0600-\u06FF]/.test(query);
+  if (hasUrduScript) {
+    preferences.unshift("ur", "ur-PK");
+  } else {
+    const lower = query.toLowerCase();
+    const romanUrdu = /hai|hain|kya|krdo|batao|chahiye|mangwa|order/.test(lower);
+    if (romanUrdu) preferences.unshift("ur-Latn-PK", "ur");
+    else preferences.unshift("en-PK");
+  }
+  return Array.from(new Set(preferences));
 }
 
 export async function loadTenantAiContext(
@@ -145,7 +171,12 @@ interface RawTenantData {
   categories: Array<Record<string, unknown>>;
   items: Array<Record<string, unknown>>;
   offers: Array<Record<string, unknown>>;
-  knowledge: Array<{ title: string; category: string; content: string }>;
+  knowledge: Array<{
+    title: string;
+    category: string;
+    content: string;
+    language: string;
+  }>;
   currency: string;
 }
 
@@ -188,6 +219,7 @@ async function loadRawTenantData(tenantId: string): Promise<RawTenantData> {
       return {
         title: d.title || "",
         category: d.category || "",
+        language: String(d.language || "en"),
         content: String(d.contentReference ?? d.content ?? "").slice(
           0,
           MAX_KNOWLEDGE_CHARS
@@ -220,6 +252,9 @@ async function buildTenantAiContext(
 
   const items = raw.items.slice(0, MAX_ITEMS).map((d) => {
     const minor = Number(d.basePriceMinor || 0);
+    const aliases = Array.isArray(d.aliases)
+      ? (d.aliases as string[]).filter(Boolean).slice(0, 8)
+      : [];
     return {
       itemId: String(d.itemId || d.id || ""),
       categoryName: categoriesMap.get(String(d.categoryId || "")) ?? "Other",
@@ -227,6 +262,7 @@ async function buildTenantAiContext(
       description: String(d.description || ""),
       priceLabel: `${currency} ${(minor / 100).toFixed(0)}`,
       availability: String(d.availability || "available"),
+      aliases,
     };
   });
 
@@ -258,8 +294,12 @@ async function buildTenantAiContext(
     });
 
   const queryTokens = tokenize(query ?? "");
+  const preferredLanguages = languagePreferences(query);
   const knowledge = raw.knowledge
-    .map((entry) => ({ entry, score: scoreKnowledge(entry, queryTokens) }))
+    .map((entry) => ({
+      entry,
+      score: scoreKnowledge(entry, queryTokens, preferredLanguages),
+    }))
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_KNOWLEDGE_ITEMS)
     .map(({ entry }) => ({

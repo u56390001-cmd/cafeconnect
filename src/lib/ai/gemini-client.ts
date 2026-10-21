@@ -26,11 +26,33 @@ export interface RestContent {
   parts: RestPart[];
 }
 
+/** Per-turn observability collected by the client (blueprint §11.1). */
+export interface ClientTurnMetrics {
+  model?: string | null;
+  attempts?: number;
+  firstTokenMs?: number;
+  modelMs?: number;
+  toolCalls?: Array<{ name: string; ok: boolean; ms: number }>;
+}
+
 export class GeminiUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "GeminiUnavailableError";
   }
+}
+
+/** Runs a tool handler and records how long it took. */
+async function runToolTimed(
+  name: string,
+  args: unknown,
+  context: ToolContext,
+  metrics?: ClientTurnMetrics
+) {
+  const startedAt = Date.now();
+  const outcome = await runTool(name, args, context);
+  metrics?.toolCalls?.push({ name, ok: outcome.ok, ms: Date.now() - startedAt });
+  return outcome;
 }
 
 /**
@@ -299,6 +321,7 @@ export async function generateGeminiTextWithTools({
   maxOutputTokens = 400,
   onToolOutcome,
   deadline,
+  metrics,
 }: {
   apiKey: string;
   model?: string;
@@ -313,6 +336,7 @@ export async function generateGeminiTextWithTools({
   maxOutputTokens?: number;
   onToolOutcome?: (name: string, outcome: { ok: boolean; data?: Record<string, unknown>; error?: string }) => void;
   deadline?: number;
+  metrics?: ClientTurnMetrics;
 }): Promise<string> {
   const hardDeadline = deadline ?? Date.now() + REQUEST_DEADLINE_MS;
   const available = await healthyModelCandidates();
@@ -324,6 +348,8 @@ export async function generateGeminiTextWithTools({
   let lastError: unknown;
 
   for (const candidate of candidates) {
+    if (metrics) metrics.attempts = (metrics.attempts ?? 0) + 1;
+    const candidateStartedAt = Date.now();
     const budget = remainingBudget(hardDeadline);
     if (budget <= 0) break;
 
@@ -348,6 +374,10 @@ export async function generateGeminiTextWithTools({
         if (!callPart) {
           const text = textFromParts(parts);
           if (!text) throw new Error("Empty AI response");
+          if (metrics) {
+            metrics.model = candidate;
+            metrics.modelMs = (metrics.modelMs ?? 0) + (Date.now() - candidateStartedAt);
+          }
           return text;
         }
 
@@ -355,10 +385,11 @@ export async function generateGeminiTextWithTools({
         // that the API requires for tool results).
         contents.push({ role: "model", parts: [callPart] });
 
-        const outcome = await runTool(
+        const outcome = await runToolTimed(
           callPart.functionCall!.name,
           callPart.functionCall!.args,
-          toolContext
+          toolContext,
+          metrics
         );
         onToolOutcome?.(callPart.functionCall!.name, outcome);
 
@@ -413,6 +444,7 @@ export async function generateGeminiTextWithToolsStream({
   onDelta,
   onToolOutcome,
   deadline,
+  metrics,
 }: {
   apiKey: string;
   model?: string;
@@ -428,6 +460,7 @@ export async function generateGeminiTextWithToolsStream({
   onDelta: (chunk: string) => void;
   onToolOutcome?: (name: string, outcome: { ok: boolean; data?: Record<string, unknown>; error?: string }) => void;
   deadline?: number;
+  metrics?: ClientTurnMetrics;
 }): Promise<string> {
   const hardDeadline = deadline ?? Date.now() + REQUEST_DEADLINE_MS;
   const available = await healthyModelCandidates();
@@ -439,6 +472,8 @@ export async function generateGeminiTextWithToolsStream({
   let lastError: unknown;
 
   for (const candidate of candidates) {
+    if (metrics) metrics.attempts = (metrics.attempts ?? 0) + 1;
+    const candidateStartedAt = Date.now();
     if (remainingBudget(hardDeadline) <= 0) break;
     const contents: RestContent[] = [
       { role: "user", parts: [{ text: prompt }] },
@@ -466,14 +501,19 @@ export async function generateGeminiTextWithToolsStream({
         const callPart = parts.find((part) => part.functionCall);
         if (!callPart) {
           if (!text.trim()) throw new Error("Empty AI response");
+          if (metrics) {
+            metrics.model = candidate;
+            metrics.modelMs = (metrics.modelMs ?? 0) + (Date.now() - candidateStartedAt);
+          }
           return text.trim();
         }
         contents.push({ role: "model", parts: [callPart] });
 
-        const outcome = await runTool(
+        const outcome = await runToolTimed(
           callPart.functionCall!.name,
           callPart.functionCall!.args,
-          toolContext
+          toolContext,
+          metrics
         );
         onToolOutcome?.(callPart.functionCall!.name, outcome);
 
@@ -562,6 +602,7 @@ export async function generateGeminiText({
     lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
   );
 }
+
 
 
 

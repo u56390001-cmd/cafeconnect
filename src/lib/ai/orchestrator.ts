@@ -3,12 +3,42 @@ import { FieldValue } from "firebase-admin/firestore";
 import { randomUUID } from "crypto";
 import { getTenantApiKey } from "@/lib/settings/keys";
 import { loadTenantAiContext, type TenantAiContext } from "./context-builder";
-import { buildGroundedPrompt, type PromptMessage } from "./prompt-builder";
+import { buildGroundedPrompt, PROMPT_VERSION, type PromptMessage } from "./prompt-builder";
 import { generateGeminiText, generateGeminiTextWithTools, generateGeminiTextWithToolsStream } from "./gemini-client";
 import { runTool, toolDeclarations, type ToolContext } from "./tools";
 import { detectLanguage, stringsFor, type LanguageMode } from "./language";
+import {
+  buildStateBlock,
+  deriveActiveIntent,
+  deriveCompactSummary,
+  deriveMissingOrderDetails,
+  persistState,
+  type ConversationState,
+  type PersistedState,
+} from "./conversation-state";
 
 export type ChatChannel = "web" | "whatsapp_meta" | "whatsapp_qr";
+
+/** Per-turn observability (blueprint §11.1). */
+export interface TurnMetrics {
+  requestId: string;
+  promptVersion: string;
+  channel: ChatChannel;
+  languageMode: string;
+  stages: {
+    historyAndContextMs: number;
+    promptAssemblyMs: number;
+    modelMs?: number;
+    firstTokenMs?: number;
+    persistMs?: number;
+    totalMs?: number;
+  };
+  model: string | null;
+  attempts: number;
+  toolCalls: Array<{ name: string; ok: boolean; ms: number }>;
+  fallbackUsed: boolean;
+  cacheHit: boolean | null;
+}
 
 export interface OutboundReply {
   reply: string;
@@ -204,6 +234,21 @@ export async function respondToCustomer(options: {
   ).mode;
   const strings = stringsFor(languageMode);
 
+  // --- Conversation state layer (Phase 1) -----------------------------
+  const persisted = (conversation ?? {}) as PersistedState;
+  const historyTexts = history.map((h) => h.content);
+  const state: ConversationState = {
+    activeIntent: deriveActiveIntent(message),
+    missingOrderDetails: deriveMissingOrderDetails(message, historyTexts),
+    mentionedItems: [],
+    cartRevision: Number(persisted.cartRevision ?? 0),
+    lastVerifiedQuote: persisted.lastVerifiedQuote ?? null,
+    lastOrderNumber: persisted.lastOrderNumber ?? null,
+    handoffStatus: status,
+    compactSummary: deriveCompactSummary(history),
+    stateVersion: Number(persisted.stateVersion ?? 0) + 1,
+  };
+
   // Persist the inbound message while the model is generating (saves a round
   // trip and keeps the conversation durable even if generation fails).
   const inboundWrite = addMessage(tenantId, conversationId, {
@@ -218,7 +263,9 @@ export async function respondToCustomer(options: {
   ], {
     languageMode,
     conversationStatus: status,
+    stateSummary: buildStateBlock(state),
   });
+  const promptReadyAt = Date.now();
 
   const tenantKey = await getTenantApiKey(tenantId, "gemini");
   const envApiKey = process.env.GEMINI_API_KEY?.trim();
@@ -289,8 +336,24 @@ export async function respondToCustomer(options: {
 
   // Overall AI budget for this turn (blueprint: bounded request deadline).
   const aiDeadline = Date.now() + 12_000;
+  const metrics: TurnMetrics = {
+    requestId,
+    promptVersion: PROMPT_VERSION,
+    channel,
+    languageMode,
+    stages: {
+      historyAndContextMs: contextReadyAt - startedAt,
+      promptAssemblyMs: promptReadyAt - contextReadyAt,
+    },
+    model: null,
+    attempts: 0,
+    toolCalls: [],
+    fallbackUsed: false,
+    cacheHit: null,
+  };
 
   for (const apiKey of candidateKeys) {
+    metrics.attempts += 1;
     try {
       if (onDelta) {
         reply = await generateGeminiTextWithToolsStream({
@@ -305,6 +368,7 @@ export async function respondToCustomer(options: {
           },
           onToolOutcome: captureToolOutcome,
           deadline: aiDeadline,
+          metrics,
         });
       } else {
         reply = await generateGeminiTextWithTools({
@@ -315,12 +379,13 @@ export async function respondToCustomer(options: {
           toolContext,
           onToolOutcome: captureToolOutcome,
           deadline: aiDeadline,
+          metrics,
         });
       }
       break;
     } catch (error: unknown) {
       console.error(
-        `[ai-error] scope=respondToCustomer tenant=${tenantId} message=${
+        `[ai-error] requestId=${requestId} scope=respondToCustomer tenant=${tenantId} message=${
           error instanceof Error ? error.message.slice(0, 200) : "unknown"
         }`
       );
@@ -330,8 +395,12 @@ export async function respondToCustomer(options: {
     }
   }
 
+
   const modelDoneAt = Date.now();
   await inboundWrite.catch(() => undefined);
+
+  metrics.stages.modelMs = modelDoneAt - promptReadyAt;
+  metrics.fallbackUsed = reply === undefined;
 
   if (reply === undefined) {
     // Deterministic, truthful fallback: if the order was created before the
@@ -348,6 +417,9 @@ export async function respondToCustomer(options: {
       senderType: "system",
       content: reply,
     });
+    metrics.stages.totalMs = Date.now() - startedAt;
+    await persistState(tenantId, conversationId, state, PROMPT_VERSION);
+    await persistTurnMetrics(tenantId, conversationId, requestId, metrics);
     return {
       reply,
       conversationId,
@@ -363,8 +435,21 @@ export async function respondToCustomer(options: {
     content: reply,
   });
 
+  // Persist the derived state so the next turn can build on it.
+  if (toolState.order) {
+    state.lastOrderNumber = toolState.order.orderNumber;
+    state.lastVerifiedQuote = toolState.order.totalLabel ?? null;
+    state.cartRevision += 1;
+  }
+  await persistState(tenantId, conversationId, state, PROMPT_VERSION);
+
+  metrics.stages.totalMs = Date.now() - startedAt;
+  await persistTurnMetrics(tenantId, conversationId, requestId, metrics);
+
   console.log(
-    `[ai-timing] requestId=${requestId} tenant=${tenantId} channel=${channel} lang=${languageMode} contextMs=${
+    `[ai-timing] requestId=${requestId} tenant=${tenantId} channel=${channel} lang=${languageMode} model=${
+      metrics.model ?? "none"
+    } attempts=${metrics.attempts} contextMs=${
       contextReadyAt - startedAt
     } modelMs=${modelDoneAt - contextReadyAt} totalMs=${Date.now() - startedAt}`
   );
@@ -376,6 +461,42 @@ export async function respondToCustomer(options: {
     languageMode,
     requestId,
   };
+}
+
+/** Stores the per-turn metrics so they are observable in the dashboard. */
+async function persistTurnMetrics(
+  tenantId: string,
+  conversationId: string,
+  requestId: string,
+  metrics: TurnMetrics
+): Promise<void> {
+  try {
+    const { tenantDoc } = await import("@/lib/tenancy/resolver");
+    await tenantDoc(tenantId, "conversations", conversationId)
+      .collection("turnMetrics")
+      .doc(requestId)
+      .set(
+        {
+          requestId,
+          promptVersion: metrics.promptVersion,
+          channel: metrics.channel,
+          languageMode: metrics.languageMode,
+          model: metrics.model,
+          attempts: metrics.attempts,
+          toolCalls: metrics.toolCalls,
+          fallbackUsed: metrics.fallbackUsed,
+          stages: metrics.stages,
+          createdAt: new Date(),
+        },
+        { merge: true }
+      );
+  } catch (error: unknown) {
+    console.error(
+      `[ai-error] scope=persistTurnMetrics message=${
+        error instanceof Error ? error.message.slice(0, 120) : "unknown"
+      }`
+    );
+  }
 }
 
 export { generateGeminiText };
