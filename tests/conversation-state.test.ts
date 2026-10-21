@@ -141,19 +141,19 @@ describe("prompt language layers", () => {
     const prompt = buildGroundedPrompt(context(), [], {
       languageMode: "ur-Latn-PK",
     });
-    expect(prompt).toMatch(/Roman Urdu/);
+    expect(prompt).toMatch(/ROMAN URDU/i);
   });
 
   it("mirrors Urdu script", () => {
     const prompt = buildGroundedPrompt(context(), [], { languageMode: "ur-PK" });
-    expect(prompt).toMatch(/Urdu \(Urdu script\)/);
+    expect(prompt).toMatch(/URDU SCRIPT/i);
   });
 
   it("mirrors mixed Urdu-English", () => {
     const prompt = buildGroundedPrompt(context(), [], {
       languageMode: "mixed-PK",
     });
-    expect(prompt).toMatch(/mixed Urdu-English/);
+    expect(prompt).toMatch(/MIXED Urdu-English/i);
   });
 
   it("exposes local aliases so the agent can match customer wording", () => {

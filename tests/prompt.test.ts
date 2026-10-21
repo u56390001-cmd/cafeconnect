@@ -102,11 +102,11 @@ describe("grounded prompt", () => {
 
   it("mirrors the customer's language mode", () => {
     const urdu = buildGroundedPrompt(context(), [], { languageMode: "ur-PK" });
-    expect(urdu).toMatch(/Urdu \(Urdu script\)/);
+    expect(urdu).toMatch(/URDU SCRIPT/i);
     const roman = buildGroundedPrompt(context(), [], {
       languageMode: "ur-Latn-PK",
     });
-    expect(roman).toMatch(/Roman Urdu/);
+    expect(roman).toMatch(/ROMAN URDU/i);
   });
 
   it("is versioned", () => {

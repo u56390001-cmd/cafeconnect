@@ -225,14 +225,14 @@ export function isUrduScript(mode: LanguageMode): boolean {
 export function scriptInstruction(mode: LanguageMode): string {
   switch (mode) {
     case "ur-PK":
-      return "Reply in Urdu (Urdu script), the way a helpful Pakistani restaurant staff member would write. Keep sentences short and natural.";
+      return "The customer wrote in URDU SCRIPT, so your reply MUST also be in Urdu script (Urdu letters: ۔ ا ہ ے چ). Do not switch to Roman Urdu or English. Keep sentences short and natural, like restaurant staff write on WhatsApp.";
     case "ur-Latn-PK":
-      return "Reply in Roman Urdu, the way customers type on WhatsApp (for example: 'Bilkul, main 2 biryani mangwa raha hoon'). Do not use formal English.";
+      return "The customer wrote in ROMAN URDU, so your reply MUST be in Roman Urdu letters (for example: 'Bilkul, main 2 biryani mangwa raha hoon'). Do not switch to Urdu script and do not use formal English.";
     case "mixed-PK":
-      return "Reply in natural mixed Urdu-English (Hinglish), matching how the customer is writing. Use English for item names and prices.";
+      return "The customer wrote in MIXED Urdu-English, so your reply MUST be natural mixed Urdu-English (Hinglish). Keep item names and prices exactly as written in the menu.";
     case "en-PK":
     default:
-      return "Reply in simple, natural Pakistani English (short sentences, friendly tone).";
+      return "The customer wrote in English, so your reply MUST be in simple, natural Pakistani English (short sentences, friendly tone).";
   }
 }
 
