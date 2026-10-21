@@ -11,6 +11,7 @@ import {
   LogOut,
   MessageSquare,
   Settings,
+  Sparkles,
   Store,
   Tag,
   Utensils,
@@ -28,6 +29,7 @@ const navItems = [
   { name: "Orders", href: "/dashboard/orders", icon: ClipboardList },
   { name: "Bookings", href: "/dashboard/bookings", icon: CalendarDays },
   { name: "Conversations", href: "/dashboard/chats", icon: MessageSquare },
+  { name: "AI Tester", href: "/dashboard/ai-tester", icon: Sparkles },
   { name: "Knowledge Base", href: "/dashboard/knowledge", icon: BookOpen },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
