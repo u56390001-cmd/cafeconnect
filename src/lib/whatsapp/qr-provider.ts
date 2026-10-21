@@ -42,7 +42,7 @@ export class QrProviderError extends Error {
 }
 
 function baseUrl(): string {
-  const url = process.env.QR_PROVIDER_BASE_URL;
+  const url = process.env.QR_PROVIDER_BASE_URL?.trim();
   if (!url) {
     throw new QrProviderError("QR provider is not configured on this deployment", 503);
   }
@@ -51,7 +51,7 @@ function baseUrl(): string {
 
 function authHeaders(token: string): Record<string, string> {
   return {
-    Authorization: `Bearer ${token}`,
+    Authorization: `Bearer ${token.trim()}`,
     "Content-Type": "application/json",
   };
 }

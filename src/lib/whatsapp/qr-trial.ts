@@ -31,7 +31,7 @@ export interface QrTrialState {
 }
 
 function providerToken(): string {
-  const token = process.env.QR_PROVIDER_API_KEY;
+  const token = process.env.QR_PROVIDER_API_KEY?.trim();
   if (!token) {
     throw new Error("QR provider is not configured on this deployment");
   }
