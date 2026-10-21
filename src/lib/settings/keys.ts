@@ -29,10 +29,10 @@ export async function getTenantApiKey(
 
   if (snapshot.empty) return null;
 
-  const usable = snapshot.docs.find((doc) => {
-    const status = doc.data().status;
-    return status === "active" || status === "pending_validation";
-  });
+  // Prefer a validated ("active") key, fall back to a pending one.
+  const active = snapshot.docs.find((doc) => doc.data().status === "active");
+  const usable =
+    active ?? snapshot.docs.find((doc) => doc.data().status === "pending_validation");
   if (!usable) return null;
 
   const doc = usable;

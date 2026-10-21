@@ -154,8 +154,12 @@ export async function respondToCustomer(options: {
   ]);
 
   const tenantKey = await getTenantApiKey(tenantId, "gemini");
-  const apiKey = tenantKey?.key ?? process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const envApiKey = process.env.GEMINI_API_KEY?.trim();
+  const candidateKeys = [tenantKey?.key?.trim(), envApiKey].filter(
+    (key): key is string => Boolean(key)
+  );
+
+  if (candidateKeys.length === 0) {
     await addMessage(tenantId, conversationId, {
       direction: "outbound",
       senderType: "system",
@@ -165,21 +169,27 @@ export async function respondToCustomer(options: {
     throw new Error("AI key not configured");
   }
 
-  let reply: string;
-  try {
-    reply = await generateGeminiText({
-      apiKey,
-      model: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite",
-      prompt,
-      temperature: 0.6,
-      maxOutputTokens: 700,
-    });
-  } catch (error: unknown) {
-    console.error(
-      `[ai-error] scope=respondToCustomer tenant=${tenantId} message=${
-        error instanceof Error ? error.message.slice(0, 200) : "unknown"
-      }`
-    );
+  let reply: string | undefined;
+  for (const apiKey of candidateKeys) {
+    try {
+      reply = await generateGeminiText({
+        apiKey,
+        model: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
+        prompt,
+        temperature: 0.6,
+        maxOutputTokens: 700,
+      });
+      break;
+    } catch (error: unknown) {
+      console.error(
+        `[ai-error] scope=respondToCustomer tenant=${tenantId} message=${
+          error instanceof Error ? error.message.slice(0, 200) : "unknown"
+        }`
+      );
+    }
+  }
+
+  if (reply === undefined) {
     reply =
       "Sorry, the AI assistant is temporarily unavailable. Please try again in a minute, or contact the business directly.";
     await addMessage(tenantId, conversationId, {
