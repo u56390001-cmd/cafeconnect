@@ -461,6 +461,15 @@ export async function respondToCustomer(options: {
     };
   }
 
+  // Safety net: a confirmed order must always carry its real order number,
+  // even if the model forgot it in the wording.
+  if (toolState.order && !reply.includes(toolState.order.orderNumber)) {
+    reply = `${reply}\n${strings.orderCreated(
+      toolState.order.orderNumber,
+      toolState.order.totalLabel ?? ""
+    )}`.trim();
+  }
+
   await addMessage(tenantId, conversationId, {
     direction: "outbound",
     senderType: "assistant",

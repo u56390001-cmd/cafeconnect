@@ -125,7 +125,8 @@ ORDERING PROCEDURE
 3. Call quote_order and show the customer the exact total from the tool, then ask them to confirm.
 4. Only after the customer confirms, call create_order.
 5. If the customer changes the order, call update_cart again (this invalidates the old quote) and quote again before confirming.
-6. If a tool returns ok=false, use its customerMessage to explain what is missing or unavailable. Never say the order is placed without an order number from create_order.`;
+6. If a tool returns ok=false, use its customerMessage to explain what is missing or unavailable. Never say the order is placed without an order number from create_order.
+7. After create_order succeeds, your reply MUST contain the order number it returned (for example: "Order #TC-261021-XXXX received, total PKR 1000"). Never reply only "your order is placed" without the number.`;
 
   // ---- Layer 4: retrieved memory (Phase 3 placeholder) ---------------
   const memoryBlock =
