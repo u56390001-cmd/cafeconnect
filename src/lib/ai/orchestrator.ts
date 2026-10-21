@@ -175,8 +175,13 @@ export async function respondToCustomer(options: {
 
   const tenantKey = await getTenantApiKey(tenantId, "gemini");
   const envApiKey = process.env.GEMINI_API_KEY?.trim();
-  const candidateKeys = [tenantKey?.key?.trim(), envApiKey].filter(
-    (key): key is string => Boolean(key)
+  // Deduplicate: the tenant key and the platform key are often the same value.
+  const candidateKeys = Array.from(
+    new Set(
+      [tenantKey?.key?.trim(), envApiKey].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
   );
 
   if (candidateKeys.length === 0) {
@@ -198,6 +203,7 @@ export async function respondToCustomer(options: {
   };
 
   let reply: string | undefined;
+  let streamedAny = false;
   const toolState: {
     order: { orderNumber: string; totalLabel?: string } | null;
   } = { order: null };
@@ -225,7 +231,10 @@ export async function respondToCustomer(options: {
           prompt,
           tools: toolDeclarations,
           toolContext,
-          onDelta,
+          onDelta: (chunk) => {
+            streamedAny = true;
+            onDelta?.(chunk);
+          },
           onToolOutcome: captureToolOutcome,
         });
       } else {
@@ -245,6 +254,9 @@ export async function respondToCustomer(options: {
           error instanceof Error ? error.message.slice(0, 200) : "unknown"
         }`
       );
+      // Never generate twice for one customer message: if text was already
+      // streamed, keep it and stop trying other keys/models.
+      if (streamedAny) break;
     }
   }
 
