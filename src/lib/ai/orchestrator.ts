@@ -1,10 +1,12 @@
 ﻿import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { FieldValue } from "firebase-admin/firestore";
+import { randomUUID } from "crypto";
 import { getTenantApiKey } from "@/lib/settings/keys";
 import { loadTenantAiContext, type TenantAiContext } from "./context-builder";
 import { buildGroundedPrompt, type PromptMessage } from "./prompt-builder";
 import { generateGeminiText, generateGeminiTextWithTools, generateGeminiTextWithToolsStream } from "./gemini-client";
 import { runTool, toolDeclarations, type ToolContext } from "./tools";
+import { detectLanguage, stringsFor, type LanguageMode } from "./language";
 
 export type ChatChannel = "web" | "whatsapp_meta" | "whatsapp_qr";
 
@@ -12,6 +14,10 @@ export interface OutboundReply {
   reply: string;
   conversationId: string;
   customerName: string | null;
+  /** True when the assistant deliberately stayed silent (staff-owned chat). */
+  suppressed?: boolean;
+  languageMode?: LanguageMode;
+  requestId?: string;
 }
 
 export async function ensureConversation(
@@ -144,6 +150,7 @@ export async function respondToCustomer(options: {
   customerReference?: string;
   onDelta?: (chunk: string) => void;
 }): Promise<OutboundReply> {
+  const requestId = randomUUID();
   const startedAt = Date.now();
   const { tenantId, channel, message, onDelta } = options;
   const customerReference = options.customerReference ?? "guest";
@@ -155,12 +162,47 @@ export async function respondToCustomer(options: {
     customerReference
   );
 
+  // --- Staff-owned conversations are never auto-answered ---------------
+  const conversationSnap = await tenantDoc(
+    tenantId,
+    "conversations",
+    conversationId
+  ).get();
+  const conversation = conversationSnap.data() ?? {};
+  const aiEnabled = conversation.aiEnabled !== false;
+  const status = String(conversation.status ?? "open");
+
+  if (!aiEnabled || status === "waitingForHuman" || status === "closed") {
+    // Persist the customer message so staff can see it, but do not reply.
+    await addMessage(tenantId, conversationId, {
+      direction: "inbound",
+      senderType: "customer",
+      content: message,
+    });
+    console.log(
+      `[ai-suppressed] requestId=${requestId} tenant=${tenantId} channel=${channel} status=${status} aiEnabled=${aiEnabled}`
+    );
+    return {
+      reply: "",
+      conversationId,
+      customerName: null,
+      suppressed: true,
+      requestId,
+    };
+  }
+
   // Load history and tenant context in parallel.
   const [history, context] = await Promise.all([
     loadHistory(tenantId, conversationId),
     loadTenantAiContext(tenantId, message),
   ]);
   const contextReadyAt = Date.now();
+
+  const languageMode = detectLanguage(
+    message,
+    context.aiSettings.language
+  ).mode;
+  const strings = stringsFor(languageMode);
 
   // Persist the inbound message while the model is generating (saves a round
   // trip and keeps the conversation durable even if generation fails).
@@ -173,7 +215,10 @@ export async function respondToCustomer(options: {
   const prompt = buildGroundedPrompt(context, [
     ...history,
     { role: "user", content: message },
-  ]);
+  ], {
+    languageMode,
+    conversationStatus: status,
+  });
 
   const tenantKey = await getTenantApiKey(tenantId, "gemini");
   const envApiKey = process.env.GEMINI_API_KEY?.trim();
@@ -202,6 +247,7 @@ export async function respondToCustomer(options: {
     conversationId,
     customerReference,
     currency: context.currency,
+    languageMode,
   };
 
   let reply: string | undefined;
@@ -269,16 +315,23 @@ export async function respondToCustomer(options: {
     // If the order was actually created before the reply failed, the customer
     // must still be told the real order number (never a false success).
     reply = toolState.order
-      ? `Aapka order #${toolState.order.orderNumber} receive ho gaya hai${
-          toolState.order.totalLabel ? `, total ${toolState.order.totalLabel}` : ""
-        }. Hamari team 10 minutes mein phone par order confirm karegi.`
-      : "Sorry, the AI assistant is temporarily unavailable. Please try again in a minute, or contact the business directly.";
+      ? `${strings.orderCreated(
+          toolState.order.orderNumber,
+          toolState.order.totalLabel ?? ""
+        )} ${strings.orderConfirmCall}`
+      : strings.aiUnavailable;
     await addMessage(tenantId, conversationId, {
       direction: "outbound",
       senderType: "system",
       content: reply,
     });
-    return { reply, conversationId, customerName: context.businessName };
+    return {
+      reply,
+      conversationId,
+      customerName: context.businessName,
+      languageMode,
+      requestId,
+    };
   }
 
   await addMessage(tenantId, conversationId, {
@@ -288,12 +341,18 @@ export async function respondToCustomer(options: {
   });
 
   console.log(
-    `[ai-timing] tenant=${tenantId} channel=${channel} contextMs=${
+    `[ai-timing] requestId=${requestId} tenant=${tenantId} channel=${channel} lang=${languageMode} contextMs=${
       contextReadyAt - startedAt
     } modelMs=${modelDoneAt - contextReadyAt} totalMs=${Date.now() - startedAt}`
   );
 
-  return { reply, conversationId, customerName: context.businessName };
+  return {
+    reply,
+    conversationId,
+    customerName: context.businessName,
+    languageMode,
+    requestId,
+  };
 }
 
 export { generateGeminiText };

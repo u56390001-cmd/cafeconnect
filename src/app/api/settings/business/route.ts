@@ -1,5 +1,6 @@
-import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
+﻿import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
+import { invalidateAiContext } from "@/lib/ai/context-builder";
 import { getSession } from "@/lib/auth/session";
 import { NextRequest } from "next/server";
 
@@ -25,6 +26,7 @@ interface BusinessPayload {
   deliveryFeeMinor?: number;
   minimumOrderMinor?: number;
   deliveryArea?: string;
+  allowedAreaKeywords?: string[];
   pickupAvailable?: boolean;
   paymentMethods?: string;
   orderInstructions?: string;
@@ -79,7 +81,9 @@ export async function GET(request: NextRequest): Promise<Response> {
       hours: profile.hours ?? "",
       currency: profile.currency ?? "PKR",
       deliveryFeeMinor: delivery.deliveryFeeMinor ?? 0,
-      minimumOrderMinor: delivery.minimumOrderMinor ?? 0,      deliveryArea: delivery.deliveryArea ?? "",
+      minimumOrderMinor: delivery.minimumOrderMinor ?? 0,
+      deliveryArea: delivery.deliveryArea ?? "",
+      allowedAreaKeywords: delivery.allowedAreaKeywords ?? [],
       pickupAvailable: delivery.pickupAvailable !== false,
       paymentMethods: delivery.paymentMethods ?? "Cash on delivery",
       orderInstructions: delivery.orderInstructions ?? "",
@@ -145,6 +149,16 @@ export async function POST(request: NextRequest): Promise<Response> {
     const deliveryArea = cleanText(body.deliveryArea, 300);
     if (deliveryArea !== undefined) deliveryUpdate.deliveryArea = deliveryArea;
 
+    if (body.allowedAreaKeywords !== undefined) {
+      deliveryUpdate.allowedAreaKeywords = Array.isArray(body.allowedAreaKeywords)
+        ? body.allowedAreaKeywords
+            .filter((value: unknown): value is string => typeof value === "string")
+            .map((value: string) => value.trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 30)
+        : [];
+    }
+
     if (body.pickupAvailable !== undefined) {
       deliveryUpdate.pickupAvailable = Boolean(body.pickupAvailable);
     }
@@ -177,8 +191,11 @@ export async function POST(request: NextRequest): Promise<Response> {
       tenantDoc(ctx.tenantId, "settings", "ai").set(aiUpdate, { merge: true }),
     ]);
 
+    invalidateAiContext(ctx.tenantId);
+
     return createApiResponse({ saved: true });
   } catch (error: unknown) {
     return handleApiError("api/settings/business", error);
   }
 }
+

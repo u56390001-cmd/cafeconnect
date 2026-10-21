@@ -1,5 +1,6 @@
-import { requireTenantScope, tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
+﻿import { requireTenantScope, tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
+import { invalidateAiContext } from "@/lib/ai/context-builder";
 import { getSession } from "@/lib/auth/session";
 import { NextRequest } from "next/server";
 
@@ -61,6 +62,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       updatedAt: new Date(),
     });
 
+    invalidateAiContext(ctx.tenantId);
+
     return createApiResponse(
       { categoryId: docRef.id, name: name.trim() },
       201
@@ -89,8 +92,11 @@ export async function DELETE(request: NextRequest): Promise<Response> {
       { merge: true }
     );
 
+    invalidateAiContext(ctx.tenantId);
+
     return createApiResponse({ deleted: categoryId });
   } catch (error: unknown) {
     return handleApiError("api/menu/categories", error);
   }
 }
+

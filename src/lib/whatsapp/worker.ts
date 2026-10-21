@@ -1,4 +1,5 @@
 import { respondToCustomer } from "@/lib/ai/orchestrator";
+import { detectLanguage, stringsFor } from "@/lib/ai/language";
 import { getTenantApiKey } from "@/lib/settings/keys";
 import { sendMetaText, type MetaInboundMessage } from "./meta-cloud";
 import { sendQrText, normalizePhone } from "./qr-provider";
@@ -39,6 +40,8 @@ async function processQrEvent(event: InboxEvent): Promise<ProcessResult> {
   }
 
   const customerReference = event.customerReference;
+  const languageMode = detectLanguage(event.text).mode;
+  const strings = stringsFor(languageMode);
 
   // If the AI takes too long, acknowledge first so the customer is not left
   // staring at silence (the real reply follows once the AI is done).
@@ -46,11 +49,7 @@ async function processQrEvent(event: InboxEvent): Promise<ProcessResult> {
   const ackTimer = setTimeout(() => {
     void (async () => {
       try {
-        await sendQrText(
-          providerToken,
-          customerReference,
-          "Ji, aapka message mil gaya hai. Main abhi check kar raha hoon, thori der mein jawab de doonga."
-        );
+        await sendQrText(providerToken, customerReference, strings.ack);
         acknowledged = true;
       } catch {
         // ignore acknowledgement failures
@@ -68,6 +67,15 @@ async function processQrEvent(event: InboxEvent): Promise<ProcessResult> {
     });
   } finally {
     clearTimeout(ackTimer);
+  }
+
+  // A staff-owned conversation is never auto-answered.
+  if (reply.suppressed) {
+    await markInboxEvent(event.tenantId, event.eventId, {
+      status: "skipped",
+      lastError: "suppressed_staff_owned",
+    });
+    return { eventId: event.eventId, status: "skipped", reason: "staff_owned" };
   }
 
   await sendQrText(providerToken, customerReference, reply.reply);

@@ -27,6 +27,7 @@ interface BusinessForm {
   deliveryFeeRupees: string;
   minimumOrderRupees: string;
   deliveryArea: string;
+  allowedAreaKeywords: string;
   pickupAvailable: boolean;
   paymentMethods: string;
   orderInstructions: string;
@@ -46,6 +47,7 @@ const EMPTY: BusinessForm = {
   deliveryFeeRupees: "0",
   minimumOrderRupees: "0",
   deliveryArea: "",
+  allowedAreaKeywords: "",
   pickupAvailable: true,
   paymentMethods: "Cash on delivery",
   orderInstructions: "",
@@ -83,6 +85,9 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
         deliveryFeeRupees: String(Math.round(Number(d.deliveryFeeMinor ?? 0) / 100)),
         minimumOrderRupees: String(Math.round(Number(d.minimumOrderMinor ?? 0) / 100)),
         deliveryArea: d.deliveryArea ?? "",
+        allowedAreaKeywords: Array.isArray(d.allowedAreaKeywords)
+          ? d.allowedAreaKeywords.join(", ")
+          : "",
         pickupAvailable: d.pickupAvailable !== false,
         paymentMethods: d.paymentMethods ?? "",
         orderInstructions: d.orderInstructions ?? "",
@@ -113,6 +118,10 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
           ...form,
           deliveryFeeMinor: Math.round(Number(form.deliveryFeeRupees || 0) * 100),
           minimumOrderMinor: Math.round(Number(form.minimumOrderRupees || 0) * 100),
+          allowedAreaKeywords: form.allowedAreaKeywords
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean),
         }),
       });
       const payload = await res.json().catch(() => null);
@@ -280,6 +289,23 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
             />
           </div>
 
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="allowedAreaKeywords">
+              Delivery area keywords (comma separated)
+            </Label>
+            <Input
+              id="allowedAreaKeywords"
+              value={form.allowedAreaKeywords}
+              onChange={(e) => set("allowedAreaKeywords", e.target.value)}
+              placeholder="faisal town, sargodha city, phase 2"
+            />
+            <p className="text-xs text-muted-foreground">
+              The backend checks the customer address against these keywords and
+              rejects out-of-area orders. If empty, orders are accepted but the
+              assistant will not claim the address is deliverable.
+            </p>
+          </div>
+
           <div className="space-y-1.5">
             <Label htmlFor="paymentMethods">Payment methods</Label>
             <Input
@@ -331,12 +357,21 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
 
           <div className="space-y-1.5">
             <Label htmlFor="language">Default language</Label>
-            <Input
+            <select
               id="language"
               value={form.language}
               onChange={(e) => set("language", e.target.value)}
-              placeholder="en"
-            />
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="en">English (Pakistani English)</option>
+              <option value="ur-Latn-PK">Roman Urdu</option>
+              <option value="ur-PK">Urdu (Urdu script)</option>
+              <option value="mixed-PK">Mixed Urdu-English</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              The assistant still mirrors the customer&apos;s language; this is
+              the fallback when the customer&apos;s language is unclear.
+            </p>
           </div>
 
           <div className="space-y-1.5 sm:col-span-2">
@@ -359,4 +394,5 @@ export function BusinessProfileCard({ tenantId }: { tenantId: string }) {
     </Card>
   );
 }
+
 

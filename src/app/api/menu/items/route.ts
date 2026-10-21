@@ -1,9 +1,10 @@
-import {
+﻿import {
   requireTenantScope,
   tenantCollection,
   tenantDoc,
 } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
+import { invalidateAiContext } from "@/lib/ai/context-builder";
 import { getSession } from "@/lib/auth/session";
 import { NextRequest } from "next/server";
 
@@ -132,8 +133,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       tenantId: ctx.tenantId,
       categoryId: validated.categoryId,
       name: validated.name.trim(),
-      description: validated.description?.trim() ?? "",
-      basePriceMinor: validated.basePriceMinor,
+      description: body.description?.trim() ?? "",
+      basePriceMinor: body.basePriceMinor,
       availability,
       publicationStatus,
       imageReferences: [],
@@ -145,6 +146,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+
+    invalidateAiContext(ctx.tenantId);
 
     return createApiResponse({ itemId: docRef.id }, 201);
   } catch (error: unknown) {
@@ -206,6 +209,8 @@ export async function PATCH(request: NextRequest): Promise<Response> {
       merge: true,
     });
 
+    invalidateAiContext(ctx.tenantId);
+
     return createApiResponse({ itemId: body.itemId });
   } catch (error: unknown) {
     return handleApiError("api/menu/items", error);
@@ -236,8 +241,11 @@ export async function DELETE(request: NextRequest): Promise<Response> {
       { merge: true }
     );
 
+    invalidateAiContext(ctx.tenantId);
+
     return createApiResponse({ deleted: itemId });
   } catch (error: unknown) {
     return handleApiError("api/menu/items", error);
   }
 }
+

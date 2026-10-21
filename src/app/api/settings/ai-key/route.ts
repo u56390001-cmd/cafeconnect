@@ -3,6 +3,7 @@ import { requireTenantScope, tenantDoc } from "@/lib/tenancy/resolver";
 import { encrypt, maskHint, decrypt } from "@/lib/security/encryption";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { getSession } from "@/lib/auth/session";
+import { invalidateTenantApiKeyCache } from "@/lib/settings/keys";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,21 @@ async function validateGeminiKey(keyValue: string): Promise<boolean> {
     { headers: { "x-goog-api-key": keyValue } }
   );
   return response.ok;
+}
+
+async function validateMetaToken(keyValue: string): Promise<boolean> {
+  const version = process.env.META_GRAPH_API_VERSION || "v20.0";
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/${version}/me?access_token=${encodeURIComponent(
+        keyValue
+      )}`,
+      { cache: "no-store" }
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function validateQrProviderKey(keyValue: string): Promise<boolean> {
@@ -87,6 +103,17 @@ export async function POST(request: NextRequest): Promise<Response> {
       }
     }
 
+    if (provider === "meta_whatsapp") {
+      const valid = await validateMetaToken(keyValue);
+      if (!valid) {
+        return createApiError(
+          "Meta rejected this access token. Check the token and the app's WhatsApp permissions, then save again.",
+          400
+        );
+      }
+      status = "active";
+    }
+
     const keyRef = tenantDoc(
       ctx.tenantId,
       "apiKeys",
@@ -109,6 +136,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+
+    invalidateTenantApiKeyCache(ctx.tenantId);
 
     return createApiResponse({
       keyId: keyRef.id,
@@ -178,6 +207,8 @@ export async function DELETE(request: NextRequest): Promise<Response> {
       .collection(`tenants/${ctx.tenantId}/apiKeys`)
       .doc(keyId)
       .delete();
+
+    invalidateTenantApiKeyCache(ctx.tenantId);
 
     return createApiResponse({ deleted: keyId });
   } catch (error: unknown) {

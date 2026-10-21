@@ -1,9 +1,49 @@
 import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
+import { getAdminDb } from "@/lib/firebase/admin";
 import { randomBytes } from "crypto";
+import { createHash } from "crypto";
 
 export interface OrderItemInput {
   itemId: string;
   quantity: number;
+}
+
+/**
+ * Typed, machine-readable failure codes. The AI layer maps these to
+ * localized customer messages; raw exception text is never shown to customers.
+ */
+export type OrderErrorCode =
+  | "INVALID_ORDER_ITEMS"
+  | "INVALID_QUANTITY"
+  | "INVALID_ITEM_ID"
+  | "INVALID_CUSTOMER_NAME"
+  | "INVALID_CUSTOMER_PHONE"
+  | "ADDRESS_REQUIRED"
+  | "INVALID_IDEMPOTENCY_KEY"
+  | "ITEM_NOT_FOUND"
+  | "ITEM_UNAVAILABLE"
+  | "ITEM_NOT_PUBLISHED"
+  | "MIN_ORDER_NOT_MET"
+  | "OUT_OF_DELIVERY_AREA"
+  | "DELIVERY_AREA_UNVERIFIED"
+  | "QUOTE_EXPIRED"
+  | "ORDER_STATUS_UNKNOWN"
+  | "INTERNAL_ERROR";
+
+export class OrderError extends Error {
+  readonly code: OrderErrorCode;
+  readonly details: Record<string, unknown>;
+
+  constructor(
+    code: OrderErrorCode,
+    message: string,
+    details: Record<string, unknown> = {}
+  ) {
+    super(message);
+    this.name = "OrderError";
+    this.code = code;
+    this.details = details;
+  }
 }
 
 export interface CreateOrderInput {
@@ -18,6 +58,13 @@ export interface CreateOrderInput {
   channel: string;
   /** Optional: avoids an extra read when the caller already knows it. */
   currency?: string;
+  /**
+   * When true, the delivery-area rule is enforced against the tenant's
+   * configured areas. When the tenant has no rule configured the order is
+   * still accepted, but `deliveryAreaStatus` is reported as "unverified" so
+   * the assistant never claims the address is eligible.
+   */
+  enforceDeliveryArea?: boolean;
 }
 
 export interface PricingResult {
@@ -26,6 +73,9 @@ export interface PricingResult {
   deliveryFeeMinor: number;
   totalMinor: number;
   appliedOfferName: string | null;
+  minimumOrderMinor: number | null;
+  deliveryAreaStatus: "verified" | "unverified" | "not_applicable";
+  deliveryAreaLabel: string | null;
 }
 
 const PAGE_ONLY_STATUSES = ["received", "confirmed", "preparing", "ready", "dispatched", "completed", "declined", "cancelled"] as const;
@@ -36,6 +86,85 @@ function quantityIsValid(qty: number): boolean {
 }
 
 type OfferData = Record<string, unknown>;
+
+export interface QuoteLine {
+  itemId: string;
+  categoryId: string;
+  unitPriceMinor: number;
+  quantity: number;
+}
+
+/**
+ * Pure pricing rules (exported for unit tests):
+ * - scoped offers discount only the matching lines,
+ * - their minimum order is checked against the scoped subtotal,
+ * - free delivery waives the delivery fee only.
+ */
+export function computePricing(
+  lines: QuoteLine[],
+  offers: OfferData[],
+  deliveryFeeMinor: number,
+  fulfilmentType: "delivery" | "pickup"
+): {
+  subtotalMinor: number;
+  discountMinor: number;
+  deliveryFeeMinor: number;
+  totalMinor: number;
+  appliedOfferName: string | null;
+  freeDeliveryOfferName: string | null;
+} {
+  const subtotalMinor = lines.reduce(
+    (sum, line) => sum + line.unitPriceMinor * line.quantity,
+    0
+  );
+
+  const offer = selectEligibleOffer(offers, lines, subtotalMinor);
+  const freeDeliveryOffer = selectFreeDeliveryOffer(offers, lines, subtotalMinor);
+
+  const discountMinor = offer?.discountMinor ?? 0;
+  const appliedOfferName = offer?.name ?? null;
+
+  let fee = deliveryFeeMinor;
+  if (freeDeliveryOffer && fulfilmentType === "delivery") {
+    fee = 0;
+  }
+
+  return {
+    subtotalMinor,
+    discountMinor,
+    deliveryFeeMinor: fee,
+    totalMinor: Math.max(subtotalMinor - discountMinor + fee, 0),
+    appliedOfferName,
+    freeDeliveryOfferName: freeDeliveryOffer?.name ?? null,
+  };
+}
+
+/** Pure delivery-area rule evaluation. */
+export function evaluateDeliveryArea(
+  address: string | undefined,
+  allowedAreaKeywords: string[],
+  deliveryAreaLabel: string | null
+): {
+  status: "verified" | "unverified" | "out_of_area" | "not_applicable";
+  label: string | null;
+} {
+  if (!address) {
+    return { status: "not_applicable", label: deliveryAreaLabel };
+  }
+  const keywords = allowedAreaKeywords
+    .map((value) => String(value).toLowerCase().trim())
+    .filter(Boolean);
+  if (keywords.length === 0) {
+    // No machine-checkable rule: the assistant must not claim eligibility.
+    return { status: "unverified", label: deliveryAreaLabel };
+  }
+  const haystack = address.toLowerCase();
+  const matches = keywords.some((keyword) => haystack.includes(keyword));
+  return {
+    status: matches ? "verified" : "out_of_area",
+    label: deliveryAreaLabel,
+  };
+}
 
 function offerScope(d: OfferData): {
   categoryIds: string[];
@@ -166,31 +295,48 @@ export async function createOrder(input: CreateOrderInput): Promise<{
   pricing: PricingResult;
   duplicate: boolean;
 }> {
-  if (!input.tenantId) throw new Error("Missing tenant");
-  if (!Array.isArray(input.items) || input.items.length === 0 || input.items.length > 20) {
-    throw new Error("Invalid order items");
+  if (!input.tenantId) {
+    throw new OrderError("INTERNAL_ERROR", "Missing tenant");
+  }
+  if (
+    !Array.isArray(input.items) ||
+    input.items.length === 0 ||
+    input.items.length > 20
+  ) {
+    throw new OrderError("INVALID_ORDER_ITEMS", "Invalid order items");
   }
   for (const item of input.items) {
     if (!quantityIsValid(item.quantity)) {
-      throw new Error("Invalid quantity");
+      throw new OrderError("INVALID_QUANTITY", "Invalid quantity");
     }
     if (!item.itemId || item.itemId.length > 64) {
-      throw new Error("Invalid item id");
+      throw new OrderError("INVALID_ITEM_ID", "Invalid item id");
     }
   }
-  if (typeof input.customerName !== "string" || !input.customerName.trim() || input.customerName.length > 100) {
-    throw new Error("Invalid customer name");
+  if (
+    typeof input.customerName !== "string" ||
+    !input.customerName.trim() ||
+    input.customerName.length > 100
+  ) {
+    throw new OrderError("INVALID_CUSTOMER_NAME", "Invalid customer name");
   }
-  if (typeof input.customerPhone !== "string" || !/^[+\d][\d\s-]{6,15}$/.test(input.customerPhone)) {
-    throw new Error("Invalid customer phone");
+  if (
+    typeof input.customerPhone !== "string" ||
+    !/^[+\d][\d\s-]{6,15}$/.test(input.customerPhone)
+  ) {
+    throw new OrderError("INVALID_CUSTOMER_PHONE", "Invalid customer phone");
   }
   if (input.fulfilmentType === "delivery") {
-    if (typeof input.address !== "string" || input.address.trim().length < 8 || input.address.length > 300) {
-      throw new Error("Valid address required for delivery");
+    if (
+      typeof input.address !== "string" ||
+      input.address.trim().length < 8 ||
+      input.address.length > 300
+    ) {
+      throw new OrderError("ADDRESS_REQUIRED", "Valid address required for delivery");
     }
   }
   if (!/^[a-zA-Z0-9_-]{8,64}$/.test(input.idempotencyKey)) {
-    throw new Error("Invalid idempotency key");
+    throw new OrderError("INVALID_IDEMPOTENCY_KEY", "Invalid idempotency key");
   }
 
   const docId = `o_${input.idempotencyKey}`;
@@ -207,6 +353,9 @@ export async function createOrder(input: CreateOrderInput): Promise<{
         deliveryFeeMinor: d.deliveryFeeMinor,
         totalMinor: d.totalMinor,
         appliedOfferName: d.appliedOfferName ?? null,
+        minimumOrderMinor: d.minimumOrderMinor ?? null,
+        deliveryAreaStatus: d.deliveryAreaStatus ?? "not_applicable",
+        deliveryAreaLabel: d.deliveryAreaLabel ?? null,
       },
       duplicate: true,
     };
@@ -218,6 +367,9 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     deliveryFeeMinor: 0,
     totalMinor: 0,
     appliedOfferName: null,
+    minimumOrderMinor: null,
+    deliveryAreaStatus: "not_applicable",
+    deliveryAreaLabel: null,
   };
 
   const snapshots: Array<Record<string, unknown>> = [];
@@ -247,13 +399,23 @@ export async function createOrder(input: CreateOrderInput): Promise<{
   for (let index = 0; index < itemSnaps.length; index++) {
     const itemSnap = itemSnaps[index];
     const entry = input.items[index];
-    if (!itemSnap.exists) throw new Error("Menu item not found");
+    if (!itemSnap.exists) {
+      throw new OrderError("ITEM_NOT_FOUND", "Menu item not found", {
+        itemId: entry.itemId,
+      });
+    }
     const d = itemSnap.data()!;
     if (d.publicationStatus !== "published") {
-      throw new Error("Menu item not available");
+      throw new OrderError("ITEM_NOT_PUBLISHED", "Menu item not available", {
+        itemId: entry.itemId,
+        itemName: d.name,
+      });
     }
     if (d.availability !== "available") {
-      throw new Error(`${d.name} is currently unavailable`);
+      throw new OrderError("ITEM_UNAVAILABLE", `${d.name} is currently unavailable`, {
+        itemId: entry.itemId,
+        itemName: d.name,
+      });
     }
     const unitPriceMinor = Number(d.basePriceMinor ?? 0);
     pricing.subtotalMinor += unitPriceMinor * entry.quantity;
@@ -273,41 +435,64 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     });
   }
 
-  const deliveryFeeMinor = deliverySettingsSnap
-    ? Number(deliverySettingsSnap.data()?.deliveryFeeMinor ?? 0)
-    : 0;
+  const deliverySettings = deliverySettingsSnap?.data() ?? {};
+  const deliveryFeeMinor = Number(deliverySettings.deliveryFeeMinor ?? 0);
+  const minimumOrderMinor = Number(deliverySettings.minimumOrderMinor ?? 0);
+  pricing.minimumOrderMinor = minimumOrderMinor > 0 ? minimumOrderMinor : null;
 
-  const offer = selectEligibleOffer(
-    offersSnap.docs.map((doc) => doc.data()),
-    lineItems,
-    pricing.subtotalMinor
-  );
-  if (offer) {
-    pricing.discountMinor = offer.discountMinor;
-    pricing.appliedOfferName = offer.name;
+  // --- Backend rule: minimum order value -------------------------------
+  if (minimumOrderMinor > 0 && pricing.subtotalMinor < minimumOrderMinor) {
+    throw new OrderError(
+      "MIN_ORDER_NOT_MET",
+      "Order is below the minimum order value",
+      {
+        minimumOrderMinor,
+        subtotalMinor: pricing.subtotalMinor,
+        currency: input.currency ?? "PKR",
+      }
+    );
   }
 
-  // A free-delivery offer waives the delivery fee (never the item subtotal).
-  const freeDeliveryOffer = selectFreeDeliveryOffer(
-    offersSnap.docs.map((doc) => doc.data()),
-    lineItems,
-    pricing.subtotalMinor
-  );
-  if (freeDeliveryOffer && input.fulfilmentType === "delivery") {
-    pricing.deliveryFeeMinor = 0;
-    pricing.appliedOfferName = pricing.appliedOfferName ?? freeDeliveryOffer.name;
-  } else {
-    pricing.deliveryFeeMinor = deliveryFeeMinor;
+  // --- Backend rule: delivery area ------------------------------------
+  if (input.fulfilmentType === "delivery") {
+    const allowedAreas: string[] = Array.isArray(deliverySettings.allowedAreaKeywords)
+      ? (deliverySettings.allowedAreaKeywords as string[])
+      : [];
+    const areaLabel = (deliverySettings.deliveryArea as string) || null;
+    const area = evaluateDeliveryArea(input.address, allowedAreas, areaLabel);
+
+    if (area.status === "out_of_area") {
+      throw new OrderError(
+        "OUT_OF_DELIVERY_AREA",
+        "Address is outside the configured delivery area",
+        { allowedAreas, deliveryArea: areaLabel }
+      );
+    }
+    pricing.deliveryAreaStatus =
+      area.status === "verified"
+        ? "verified"
+        : area.status === "unverified"
+          ? "unverified"
+          : "not_applicable";
+    pricing.deliveryAreaLabel = area.label;
   }
 
-  pricing.totalMinor = Math.max(
-    pricing.subtotalMinor - pricing.discountMinor + pricing.deliveryFeeMinor,
-    0
+  // --- Pricing (pure rules, unit tested) --------------------------------
+  const computed = computePricing(
+    lineItems,
+    offersSnap.docs.map((doc) => doc.data()),
+    deliveryFeeMinor,
+    input.fulfilmentType
   );
-
-  const orderNumber = `TC-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${randomBytes(2).toString("hex").toUpperCase()}`;
+  pricing.subtotalMinor = computed.subtotalMinor;
+  pricing.discountMinor = computed.discountMinor;
+  pricing.deliveryFeeMinor = computed.deliveryFeeMinor;
+  pricing.totalMinor = computed.totalMinor;
+  pricing.appliedOfferName =
+    computed.appliedOfferName ?? computed.freeDeliveryOfferName;
 
   const currency = input.currency ?? (await getCurrency(input.tenantId));
+  const orderNumber = await reserveOrderNumber(input.tenantId, currency);
 
   await orderRef.set({
     orderId: docId,
@@ -321,11 +506,15 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     discountMinor: pricing.discountMinor,
     deliveryFeeMinor: pricing.deliveryFeeMinor,
     totalMinor: pricing.totalMinor,
+    minimumOrderMinor: pricing.minimumOrderMinor,
+    deliveryAreaStatus: pricing.deliveryAreaStatus,
+    deliveryAreaLabel: pricing.deliveryAreaLabel,
     currency,
     appliedOffer: pricing.appliedOfferName,
     customer: {
       name: input.customerName.trim(),
       phone: input.customerPhone,
+      phoneHash: hashPhone(input.customerPhone),
     },
     fulfilment: {
       type: input.fulfilmentType,
@@ -338,7 +527,87 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     updatedAt: new Date(),
   });
 
+  // Index document so order lookup never needs a collection scan.
+  await getAdminDb()
+    .collection("orderNumbers")
+    .doc(orderNumber)
+    .set(
+      {
+        orderNumber,
+        tenantId: input.tenantId,
+        orderId: docId,
+        phoneHash: hashPhone(input.customerPhone),
+        createdAt: new Date(),
+      },
+      { merge: true }
+    );
+
   return { orderId: docId, orderNumber, pricing, duplicate: false };
+}
+
+/** Stable, non-reversible identifier for a phone number (index lookups). */
+export function hashPhone(phone: string): string {
+  return createHash("sha256")
+    .update(String(phone).replace(/\D/g, ""))
+    .digest("hex")
+    .slice(0, 32);
+}
+
+/**
+ * Reserves a collision-free, human-readable order number.
+ * A top-level index document is created inside a transaction so two
+ * concurrent orders can never share a number.
+ */
+export async function reserveOrderNumber(
+  tenantId: string,
+  currency: string
+): Promise<string> {
+  const db = getAdminDb();
+  const datePart = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const suffix = randomBytes(4).toString("hex").toUpperCase();
+    const candidate = `TC-${datePart}-${suffix}`;
+    const ref = db.collection("orderNumbers").doc(candidate);
+
+    const reserved = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists) return false;
+      tx.set(ref, {
+        orderNumber: candidate,
+        tenantId,
+        currency,
+        createdAt: new Date(),
+      });
+      return true;
+    });
+
+    if (reserved) return candidate;
+  }
+
+  // Extremely unlikely fallback: a longer random suffix.
+  return `TC-${datePart}-${randomBytes(8).toString("hex").toUpperCase()}`;
+}
+
+/**
+ * Resolves an order by its public order number using the index (no scan).
+ * Tenant scope is enforced by the caller.
+ */
+export async function findOrderByNumber(
+  tenantId: string,
+  orderNumber: string
+): Promise<{ orderId: string; phoneHash: string } | null> {
+  const snap = await getAdminDb()
+    .collection("orderNumbers")
+    .doc(orderNumber.trim().toUpperCase())
+    .get();
+  if (!snap.exists) return null;
+  const data = snap.data()!;
+  if (data.tenantId !== tenantId) return null;
+  return {
+    orderId: String(data.orderId ?? ""),
+    phoneHash: String(data.phoneHash ?? ""),
+  };
 }
 
 async function getCurrency(tenantId: string): Promise<string> {

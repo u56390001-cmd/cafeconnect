@@ -1,9 +1,10 @@
-import {
+﻿import {
   requireTenantScope,
   tenantCollection,
   tenantDoc,
 } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
+import { invalidateAiContext } from "@/lib/ai/context-builder";
 import { getSession } from "@/lib/auth/session";
 import { NextRequest } from "next/server";
 
@@ -129,6 +130,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       updatedAt: new Date(),
     });
 
+    invalidateAiContext(ctx.tenantId);
+
     return createApiResponse({ offerId: docRef.id }, 201);
   } catch (error: unknown) {
     return handleApiError("api/offers", error);
@@ -155,6 +158,8 @@ export async function PATCH(request: NextRequest): Promise<Response> {
       { merge: true }
     );
 
+    invalidateAiContext(ctx.tenantId);
+
     return createApiResponse({ offerId, status });
   } catch (error: unknown) {
     return handleApiError("api/offers", error);
@@ -176,8 +181,11 @@ export async function DELETE(request: NextRequest): Promise<Response> {
     const ctx = await requireTenantScope(tenantId, session.uid, "manage");
     await tenantDoc(ctx.tenantId, "offers", offerId).delete();
 
+    invalidateAiContext(ctx.tenantId);
+
     return createApiResponse({ deleted: offerId });
   } catch (error: unknown) {
     return handleApiError("api/offers", error);
   }
 }
+

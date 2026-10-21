@@ -54,6 +54,8 @@ export async function GET(request: NextRequest): Promise<Response> {
           channel: d.channel,
           customerReference: d.customerReference,
           status: d.status,
+          aiEnabled: d.aiEnabled !== false,
+          handoff: d.handoff ?? null,
           messageCount: d.messageCount ?? 0,
           lastMessageAt: d.lastMessageAt,
           createdAt: d.createdAt,
@@ -71,22 +73,30 @@ export async function PATCH(request: NextRequest): Promise<Response> {
     const session = await getSession(request);
     if (!session) return createApiError("Unauthorized", 401);
 
-    const { tenantId, conversationId, status } = await request.json();
+    const { tenantId, conversationId, status, aiEnabled } =
+      await request.json();
     if (!tenantId || !conversationId) {
       return createApiError("Missing tenantId or conversationId", 400);
     }
-    if (!CONVERSATION_STATUSES.includes(status)) {
+    if (status !== undefined && !CONVERSATION_STATUSES.includes(status)) {
       return createApiError("Invalid status", 400);
     }
 
     await requireTenantScope(tenantId, session.uid, "member");
 
-    await tenantDoc(tenantId, "conversations", conversationId).set(
-      { status, updatedAt: new Date() },
-      { merge: true }
-    );
+    const update: Record<string, unknown> = { updatedAt: new Date() };
+    if (status !== undefined) update.status = status;
+    if (aiEnabled !== undefined) {
+      update.aiEnabled = Boolean(aiEnabled);
+      // Re-enabling the assistant returns the conversation to the open state.
+      if (aiEnabled) update.status = "open";
+    }
 
-    return createApiResponse({ conversationId, status });
+    await tenantDoc(tenantId, "conversations", conversationId).set(update, {
+      merge: true,
+    });
+
+    return createApiResponse({ conversationId, ...update });
   } catch (error: unknown) {
     return handleApiError("api/conversations", error);
   }

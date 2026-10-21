@@ -13,6 +13,13 @@ interface Conversation {
   channel: string;
   customerReference: string | null;
   status: string;
+  aiEnabled: boolean;
+  handoff: {
+    reason?: string;
+    summary?: string;
+    priority?: string;
+    createdAt?: string;
+  } | null;
   messageCount: number;
   lastMessageAt: string;
 }
@@ -40,6 +47,9 @@ function ChatsPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [reply, setReply] = useState("");
+  const [sending, setSending] = useState(false);
+  const [replyNotice, setReplyNotice] = useState("");
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -93,6 +103,51 @@ function ChatsPage() {
       setConversations((cs) =>
         cs.map((c) => (c.conversationId === conversationId ? { ...c, status } : c))
       );
+    }
+  }
+
+  async function sendReply(e: React.FormEvent) {
+    e.preventDefault();
+    if (!tenantId || !selected || !reply.trim()) return;
+    setSending(true);
+    setReplyNotice("");
+    try {
+      const res = await authFetch("/api/conversations/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          tenantId,
+          conversationId: selected,
+          content: reply.trim(),
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setReplyNotice(
+          payload?.error?.message ?? "Could not send the reply to the customer."
+        );
+        return;
+      }
+      setReply("");
+      setReplyNotice(
+        payload?.data?.delivered
+          ? "Reply sent to the customer."
+          : "Reply saved. The assistant stays disabled for this chat until you re-enable it."
+      );
+      await load();
+      await loadThread(selected);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function setAiEnabled(conversationId: string, aiEnabled: boolean) {
+    if (!tenantId) return;
+    const res = await authFetch("/api/conversations", {
+      method: "PATCH",
+      body: JSON.stringify({ tenantId, conversationId, aiEnabled }),
+    });
+    if (res.ok) {
+      await load();
     }
   }
 
@@ -150,7 +205,7 @@ function ChatsPage() {
         </CardContent>
       </Card>
 
-      <Card className="h-[70vh] overflow-y-auto">
+      <Card className="flex h-[70vh] flex-col">
         <CardHeader className="sticky top-0 z-10 bg-card">
           <CardTitle className="text-base">Thread</CardTitle>
           {selectedConversation && (
@@ -173,13 +228,22 @@ function ChatsPage() {
                   Resolve
                 </Button>
               )}
+              {selectedConversation.aiEnabled === false && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAiEnabled(selectedConversation.conversationId, true)}
+                >
+                  Re-enable AI
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={() => void loadThread(selectedConversation.conversationId)}>
                 Reload
               </Button>
             </div>
           )}
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex-1 overflow-y-auto">
           {!selected ? (
             <Empty>
               <p>Select a conversation to view the thread.</p>
@@ -188,6 +252,21 @@ function ChatsPage() {
             <p className="text-sm text-muted-foreground">Loading messages...</p>
           ) : (
             <div className="space-y-2.5">
+              {selectedConversation?.handoff && (
+                <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+                  <p className="font-semibold">
+                    Handoff ({selectedConversation.handoff.priority ?? "normal"})
+                  </p>
+                  <p className="text-muted-foreground">
+                    {selectedConversation.handoff.reason}
+                  </p>
+                  {selectedConversation.handoff.summary && (
+                    <p className="pt-1 text-muted-foreground">
+                      {selectedConversation.handoff.summary}
+                    </p>
+                  )}
+                </div>
+              )}
               {messages.map((m) => (
                 <div
                   key={m.messageId}
@@ -205,13 +284,36 @@ function ChatsPage() {
                     {m.content}
                   </div>
                   <p className="px-1 pt-0.5 text-[10px] text-muted-foreground">
-                    {m.senderType} Â· {new Date(m.createdAt).toLocaleTimeString()}
+                    {m.senderType} · {new Date(m.createdAt).toLocaleTimeString()}
                   </p>
                 </div>
               ))}
             </div>
           )}
         </CardContent>
+        {selected && (
+          <div className="space-y-2 border-t border-border p-3">
+            <form onSubmit={sendReply} className="flex gap-2">
+              <input
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                placeholder="Reply to the customer (sent on the same channel)…"
+                className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                disabled={sending}
+              />
+              <Button type="submit" size="sm" disabled={sending || !reply.trim()}>
+                {sending ? "Sending…" : "Send"}
+              </Button>
+            </form>
+            {replyNotice && (
+              <p className="text-xs text-muted-foreground">{replyNotice}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Sending a reply keeps the assistant paused for this chat. Use
+              &quot;Re-enable AI&quot; to hand it back to the assistant.
+            </p>
+          </div>
+        )}
       </Card>
     </div>
   );
