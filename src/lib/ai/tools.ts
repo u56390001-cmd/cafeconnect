@@ -3,6 +3,7 @@ import {
   createOrder,
   findOrderByNumber,
   hashPhone,
+  quoteOrder,
   OrderError,
   type OrderErrorCode,
 } from "@/lib/services/orders";
@@ -458,21 +459,11 @@ async function runQuoteOrder(
   const address = typeof args.address === "string" ? args.address.trim() : undefined;
 
   try {
-    // A quote uses the same pricing/rules path but never stores an order.
-    const result = await createOrder({
+    const quote = await quoteOrder({
       tenantId: context.tenantId,
       items,
-      customerName: "quote",
-      customerPhone: "0000000000",
       fulfilmentType,
       address: fulfilmentType === "delivery" ? address : undefined,
-      idempotencyKey: `quote_${createHash("sha256")
-        .update(
-          JSON.stringify({ items, context: context.conversationId, fulfilmentType })
-        )
-        .digest("hex")
-        .slice(0, 24)}`,
-      channel: context.channel,
       currency: context.currency,
     });
 
@@ -482,16 +473,22 @@ async function runQuoteOrder(
     return {
       ok: true,
       data: {
-        totalLabel: money(result.pricing.totalMinor),
-        subtotalLabel: money(result.pricing.subtotalMinor),
-        discountLabel: money(result.pricing.discountMinor),
-        deliveryFeeLabel: money(result.pricing.deliveryFeeMinor),
-        appliedOffer: result.pricing.appliedOfferName,
-        minimumOrderLabel: result.pricing.minimumOrderMinor
-          ? money(result.pricing.minimumOrderMinor)
+        totalLabel: money(quote.totalMinor),
+        subtotalLabel: money(quote.subtotalMinor),
+        discountLabel: money(quote.discountMinor),
+        deliveryFeeLabel: money(quote.deliveryFeeMinor),
+        appliedOffer: quote.appliedOfferName,
+        minimumOrderLabel: quote.minimumOrderMinor
+          ? money(quote.minimumOrderMinor)
           : null,
-        deliveryAreaStatus: result.pricing.deliveryAreaStatus,
-        deliveryAreaLabel: result.pricing.deliveryAreaLabel,
+        deliveryAreaStatus: quote.deliveryAreaStatus,
+        deliveryAreaLabel: quote.deliveryAreaLabel,
+        lines: quote.items.map((line) => ({
+          name: line.name,
+          quantity: line.quantity,
+          unitLabel: money(line.unitPriceMinor),
+          lineTotalLabel: money(line.lineTotalMinor),
+        })),
         note: "Quote only. No order was created.",
       },
     };

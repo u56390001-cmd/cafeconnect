@@ -33,18 +33,44 @@ export class GeminiUnavailableError extends Error {
   }
 }
 
+/**
+ * Per-model health. Free-tier quotas are granted per model, so one model can
+ * be rate-limited (429) or degraded (hang) while another still works. A model
+ * that times out or is rate-limited is paused for a while so later requests
+ * do not pay the timeout again.
+ */
+const MODEL_COOLDOWN_MS = 10 * 60 * 1000;
+const unhealthyUntil = new Map<string, number>();
+
+function markModelUnhealthy(model: string): void {
+  unhealthyUntil.set(model, Date.now() + MODEL_COOLDOWN_MS);
+}
+
+function isModelHealthy(model: string): boolean {
+  const until = unhealthyUntil.get(model);
+  if (!until) return true;
+  if (until <= Date.now()) {
+    unhealthyUntil.delete(model);
+    return true;
+  }
+  return false;
+}
+
 export function modelCandidates(): string[] {
   const configured = process.env.GEMINI_MODEL?.trim();
   const list = [
     configured,
+    "gemini-3.1-flash-lite",
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
-    "gemini-3.1-flash-lite",
   ].filter((value): value is string => Boolean(value));
-  return Array.from(new Set(list));
+  const unique = Array.from(new Set(list));
+  const healthy = unique.filter((model) => isModelHealthy(model));
+  // Never return an empty list: fall back to every candidate.
+  return healthy.length > 0 ? healthy : unique;
 }
 
-const MODEL_TIMEOUT_MS = 9_000;
+const MODEL_TIMEOUT_MS = 7_000;
 const STREAM_TIMEOUT_MS = 18_000;
 
 class ModelTimeoutError extends Error {
@@ -76,8 +102,8 @@ function toolPayload(
   }));
 }
 
-function isRetryableMessage(message: string): boolean {
-  return !/quota|API key|permission|not found|API_KEY_INVALID|400/i.test(message);
+function shouldPauseModel(message: string): boolean {
+  return /429|quota|overloaded|high demand|503|timeout|aborted/i.test(message);
 }
 
 async function restCall(
@@ -293,7 +319,7 @@ export async function generateGeminiTextWithTools({
       console.error(
         `[ai-error] scope=tool-call model=${candidate} message=${message.slice(0, 180)}`
       );
-      if (!isRetryableMessage(message)) break;
+      if (shouldPauseModel(message)) markModelUnhealthy(candidate);
     }
   }
 
@@ -399,7 +425,7 @@ export async function generateGeminiTextWithToolsStream({
       // If text was already streamed, do not retry with another model: the
       // customer would receive the same answer twice.
       if (text.trim()) return text.trim();
-      if (!isRetryableMessage(message)) break;
+      if (shouldPauseModel(message)) markModelUnhealthy(candidate);
     }
   }
 
@@ -445,7 +471,7 @@ export async function generateGeminiText({
       console.error(
         `[ai-error] scope=text model=${candidate} message=${message.slice(0, 180)}`
       );
-      if (!isRetryableMessage(message)) break;
+      if (shouldPauseModel(message)) markModelUnhealthy(candidate);
     }
   }
 
@@ -453,3 +479,4 @@ export async function generateGeminiText({
     lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
   );
 }
+

@@ -139,7 +139,8 @@ export function computePricing(
   };
 }
 
-/** Pure delivery-area rule evaluation. */
+/**
+ * Pure delivery-area rule evaluation. */
 export function evaluateDeliveryArea(
   address: string | undefined,
   allowedAreaKeywords: string[],
@@ -163,6 +164,175 @@ export function evaluateDeliveryArea(
   return {
     status: matches ? "verified" : "out_of_area",
     label: deliveryAreaLabel,
+  };
+}
+
+export interface QuoteResult {
+  items: Array<{
+    itemId: string;
+    name: string;
+    quantity: number;
+    unitPriceMinor: number;
+    lineTotalMinor: number;
+  }>;
+  subtotalMinor: number;
+  discountMinor: number;
+  deliveryFeeMinor: number;
+  totalMinor: number;
+  appliedOfferName: string | null;
+  minimumOrderMinor: number | null;
+  deliveryAreaStatus: "verified" | "unverified" | "not_applicable";
+  deliveryAreaLabel: string | null;
+}
+
+/**
+ * Prices a proposed order **without storing anything**. Used by the
+ * quote_order tool so a customer can be shown an authoritative total before
+ * the order is created.
+ */
+export async function quoteOrder(input: {
+  tenantId: string;
+  items: OrderItemInput[];
+  fulfilmentType: "delivery" | "pickup";
+  address?: string;
+  currency?: string;
+}): Promise<QuoteResult> {
+  if (!Array.isArray(input.items) || input.items.length === 0) {
+    throw new OrderError("INVALID_ORDER_ITEMS", "Invalid order items");
+  }
+  for (const item of input.items) {
+    if (!quantityIsValid(item.quantity)) {
+      throw new OrderError("INVALID_QUANTITY", "Invalid quantity");
+    }
+    if (!item.itemId || item.itemId.length > 64) {
+      throw new OrderError("INVALID_ITEM_ID", "Invalid item id");
+    }
+  }
+  if (input.fulfilmentType === "delivery") {
+    if (
+      typeof input.address !== "string" ||
+      input.address.trim().length < 8 ||
+      input.address.length > 300
+    ) {
+      throw new OrderError("ADDRESS_REQUIRED", "Valid address required for delivery");
+    }
+  }
+
+  const [itemSnaps, deliverySettingsSnap, offersSnap] = await Promise.all([
+    Promise.all(
+      input.items.map((entry) =>
+        tenantDoc(input.tenantId, "menuItems", entry.itemId).get()
+      )
+    ),
+    input.fulfilmentType === "delivery"
+      ? tenantDoc(input.tenantId, "settings", "delivery").get()
+      : Promise.resolve(null),
+    tenantCollection(input.tenantId, "offers")
+      .where("status", "==", "active")
+      .get(),
+  ]);
+
+  const items: QuoteResult["items"] = [];
+  const lineItems: QuoteLine[] = [];
+
+  for (let index = 0; index < itemSnaps.length; index++) {
+    const itemSnap = itemSnaps[index];
+    const entry = input.items[index];
+    if (!itemSnap.exists) {
+      throw new OrderError("ITEM_NOT_FOUND", "Menu item not found", {
+        itemId: entry.itemId,
+      });
+    }
+    const d = itemSnap.data()!;
+    if (d.publicationStatus !== "published") {
+      throw new OrderError("ITEM_NOT_PUBLISHED", "Menu item not available", {
+        itemId: entry.itemId,
+        itemName: d.name,
+      });
+    }
+    if (d.availability !== "available") {
+      throw new OrderError("ITEM_UNAVAILABLE", `${d.name} is currently unavailable`, {
+        itemId: entry.itemId,
+        itemName: d.name,
+      });
+    }
+    const unitPriceMinor = Number(d.basePriceMinor ?? 0);
+    items.push({
+      itemId: entry.itemId,
+      name: String(d.name ?? ""),
+      quantity: entry.quantity,
+      unitPriceMinor,
+      lineTotalMinor: unitPriceMinor * entry.quantity,
+    });
+    lineItems.push({
+      itemId: entry.itemId,
+      categoryId: String(d.categoryId ?? ""),
+      unitPriceMinor,
+      quantity: entry.quantity,
+    });
+  }
+
+  const deliverySettings = deliverySettingsSnap?.data() ?? {};
+  const deliveryFeeMinor = Number(deliverySettings.deliveryFeeMinor ?? 0);
+  const minimumOrderMinor = Number(deliverySettings.minimumOrderMinor ?? 0);
+
+  const computed = computePricing(
+    lineItems,
+    offersSnap.docs.map((doc) => doc.data()),
+    deliveryFeeMinor,
+    input.fulfilmentType
+  );
+
+  if (minimumOrderMinor > 0 && computed.subtotalMinor < minimumOrderMinor) {
+    throw new OrderError(
+      "MIN_ORDER_NOT_MET",
+      "Order is below the minimum order value",
+      {
+        minimumOrderMinor,
+        subtotalMinor: computed.subtotalMinor,
+        currency: input.currency ?? "PKR",
+      }
+    );
+  }
+
+  let deliveryAreaStatus: QuoteResult["deliveryAreaStatus"] = "not_applicable";
+  let deliveryAreaLabel: string | null = null;
+  if (input.fulfilmentType === "delivery") {
+    const allowedAreas: string[] = Array.isArray(deliverySettings.allowedAreaKeywords)
+      ? (deliverySettings.allowedAreaKeywords as string[])
+      : [];
+    const area = evaluateDeliveryArea(
+      input.address,
+      allowedAreas,
+      (deliverySettings.deliveryArea as string) || null
+    );
+    if (area.status === "out_of_area") {
+      throw new OrderError(
+        "OUT_OF_DELIVERY_AREA",
+        "Address is outside the configured delivery area",
+        { allowedAreas, deliveryArea: area.label }
+      );
+    }
+    deliveryAreaStatus =
+      area.status === "verified"
+        ? "verified"
+        : area.status === "unverified"
+          ? "unverified"
+          : "not_applicable";
+    deliveryAreaLabel = area.label;
+  }
+
+  return {
+    items,
+    subtotalMinor: computed.subtotalMinor,
+    discountMinor: computed.discountMinor,
+    deliveryFeeMinor: computed.deliveryFeeMinor,
+    totalMinor: computed.totalMinor,
+    appliedOfferName:
+      computed.appliedOfferName ?? computed.freeDeliveryOfferName,
+    minimumOrderMinor: minimumOrderMinor > 0 ? minimumOrderMinor : null,
+    deliveryAreaStatus,
+    deliveryAreaLabel,
   };
 }
 
