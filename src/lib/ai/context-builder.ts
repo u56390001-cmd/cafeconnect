@@ -1,4 +1,4 @@
-import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
+﻿import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { Timestamp } from "firebase-admin/firestore";
 
 export interface MenuContext {
@@ -62,7 +62,7 @@ export interface TenantAiContext {
 }
 
 const MAX_KNOWLEDGE_ITEMS = 6;
-const MAX_KNOWLEDGE_CHARS = 900;
+const MAX_KNOWLEDGE_CHARS = 600;
 const MAX_ITEMS = 60;
 const CONTEXT_CACHE_TTL_MS = 60_000;
 
@@ -306,3 +306,5 @@ async function buildTenantAiContext(
     knowledge,
   };
 }
+
+

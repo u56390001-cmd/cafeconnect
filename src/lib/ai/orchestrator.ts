@@ -1,4 +1,4 @@
-import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
+﻿import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { FieldValue } from "firebase-admin/firestore";
 import { getTenantApiKey } from "@/lib/settings/keys";
 import { loadTenantAiContext, type TenantAiContext } from "./context-builder";
@@ -203,7 +203,7 @@ export async function respondToCustomer(options: {
       if (onDelta) {
         reply = await generateGeminiTextWithToolsStream({
           apiKey,
-          model: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
+          model: process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite",
           prompt,
           tools: toolDeclarations,
           toolContext,
@@ -212,7 +212,7 @@ export async function respondToCustomer(options: {
       } else {
         reply = await generateGeminiTextWithTools({
           apiKey,
-          model: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
+          model: process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite",
           prompt,
           tools: toolDeclarations,
           toolContext,
@@ -257,3 +257,4 @@ export async function respondToCustomer(options: {
 }
 
 export { generateGeminiText };
+

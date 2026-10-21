@@ -1,7 +1,41 @@
-import { GoogleGenerativeAI, type FunctionDeclaration } from "@google/generative-ai";
+﻿import { GoogleGenerativeAI, type FunctionDeclaration } from "@google/generative-ai";
 import { runTool, type ToolContext } from "./tools";
 
 const clients = new Map<string, GoogleGenerativeAI>();
+
+/**
+ * Ordered model candidates. The first one is the tenant's configured model;
+ * the rest are safety nets so a degraded/rate-limited model never blocks a
+ * customer reply.
+ */
+export function modelCandidates(): string[] {
+  const configured = process.env.GEMINI_MODEL?.trim();
+  const list = [
+    configured,
+    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite",
+  ].filter((value): value is string => Boolean(value));
+  return Array.from(new Set(list));
+}
+
+const MODEL_TIMEOUT_MS = 8_000;
+const MODEL_TIMEOUT_STREAM_MS = 25_000;
+
+class ModelTimeoutError extends Error {
+  constructor() {
+    super("ModelTimeout");
+    this.name = "ModelTimeout";
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ModelTimeoutError()), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
+}
 
 export class GeminiUnavailableError extends Error {
   constructor(message: string) {
@@ -28,7 +62,7 @@ function isRetryable(message: string): boolean {
 
 export async function generateGeminiText({
   apiKey,
-  model = "gemini-3.1-flash-lite",
+  model = "gemini-3.5-flash-lite",
   prompt,
   temperature = 0.7,
   maxOutputTokens = 400,
@@ -83,7 +117,7 @@ export async function generateGeminiText({
  */
 export async function generateGeminiTextWithTools({
   apiKey,
-  model = "gemini-3.1-flash-lite",
+  model = "gemini-3.5-flash-lite",
   prompt,
   tools,
   toolContext,
@@ -99,43 +133,72 @@ export async function generateGeminiTextWithTools({
   maxOutputTokens?: number;
 }): Promise<string> {
   const client = getGeminiClient(apiKey.trim());
-  const generativeModel = client.getGenerativeModel({
-    model: model.trim(),
-    generationConfig: {
-      temperature,
-      maxOutputTokens,
-    },
-    tools: [{ functionDeclarations: tools }],
-  });
+  const candidates = modelCandidates().includes(model)
+    ? modelCandidates()
+    : [model, ...modelCandidates()];
 
-  const chat = generativeModel.startChat({ tools: [{ functionDeclarations: tools }] });
+  let lastError: unknown;
 
-  let response = await chat.sendMessage(prompt);
-
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const calls = response.response.functionCalls() ?? [];
-    if (!calls.length) break;
-
-    for (const call of calls) {
-      const outcome = await runTool(call.name, call.args, toolContext);
-      response = await chat.sendMessage([
-        {
-          functionResponse: {
-            name: call.name,
-            response: outcome.ok
-              ? { ok: true, ...(outcome.data ?? {}) }
-              : { ok: false, error: outcome.error ?? "Tool failed" },
-          },
+  for (const candidate of candidates) {
+    try {
+      const generativeModel = client.getGenerativeModel({
+        model: candidate,
+        generationConfig: {
+          temperature,
+          maxOutputTokens,
         },
-      ]);
+        tools: [{ functionDeclarations: tools }],
+      });
+
+      const chat = generativeModel.startChat({
+        tools: [{ functionDeclarations: tools }],
+      });
+
+      let response = await withTimeout(
+        chat.sendMessage(prompt),
+        MODEL_TIMEOUT_MS
+      );
+
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const calls = response.response.functionCalls() ?? [];
+        if (!calls.length) break;
+
+        for (const call of calls) {
+          const outcome = await runTool(call.name, call.args, toolContext);
+          response = await withTimeout(
+            chat.sendMessage([
+              {
+                functionResponse: {
+                  name: call.name,
+                  response: outcome.ok
+                    ? { ok: true, ...(outcome.data ?? {}) }
+                    : { ok: false, error: outcome.error ?? "Tool failed" },
+                },
+              },
+            ]),
+            MODEL_TIMEOUT_MS
+          );
+        }
+      }
+
+      const text = response.response.text();
+      if (!text.trim()) {
+        throw new GeminiUnavailableError("Empty AI response");
+      }
+      return text;
+    } catch (error: unknown) {
+      lastError = error;
+      console.error(
+        `[ai-error] scope=tool-call model=${candidate} message=${
+          error instanceof Error ? error.message.slice(0, 160) : "unknown"
+        }`
+      );
     }
   }
 
-  const text = response.response.text();
-  if (!text.trim()) {
-    throw new GeminiUnavailableError("Empty AI response");
-  }
-  return text;
+  throw new GeminiUnavailableError(
+    lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
+  );
 }
 
 /**
@@ -144,7 +207,7 @@ export async function generateGeminiTextWithTools({
  */
 export async function generateGeminiTextWithToolsStream({
   apiKey,
-  model = "gemini-3.1-flash-lite",
+  model = "gemini-3.5-flash-lite",
   prompt,
   tools,
   toolContext,
@@ -162,65 +225,97 @@ export async function generateGeminiTextWithToolsStream({
   onDelta: (chunk: string) => void;
 }): Promise<string> {
   const client = getGeminiClient(apiKey.trim());
-  const generativeModel = client.getGenerativeModel({
-    model: model.trim(),
-    generationConfig: {
-      temperature,
-      maxOutputTokens,
-    },
-    tools: [{ functionDeclarations: tools }],
-  });
+  const candidates = modelCandidates().includes(model)
+    ? modelCandidates()
+    : [model, ...modelCandidates()];
 
-  const chat = generativeModel.startChat({ tools: [{ functionDeclarations: tools }] });
-  let full = "";
+  let lastError: unknown;
 
-  async function streamTurn(request: string | Array<unknown>): Promise<{
-    text: string;
-    calls: ReturnType<typeof generativeModel.generateContent> extends never
-      ? never
-      : Array<{ name: string; args: object }>;
-  }> {
-    const streamResult = await chat.sendMessageStream(request as never);
-    let text = "";
-    for await (const chunk of streamResult.stream) {
-      const piece = chunk.text();
-      if (piece) {
-        text += piece;
-        full += piece;
-        onDelta(piece);
-      }
-    }
-    const aggregated = await streamResult.response;
-    const calls = (aggregated.functionCalls() ?? []) as Array<{
-      name: string;
-      args: object;
-    }>;
-    return { text, calls };
-  }
-
-  let turn = await streamTurn(prompt);
-
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    if (!turn.calls.length) break;
-
-    for (const call of turn.calls) {
-      const outcome = await runTool(call.name, call.args, toolContext);
-      turn = await streamTurn([
-        {
-          functionResponse: {
-            name: call.name,
-            response: outcome.ok
-              ? { ok: true, ...(outcome.data ?? {}) }
-              : { ok: false, error: outcome.error ?? "Tool failed" },
-          },
+  for (const candidate of candidates) {
+    const full = "";
+    let buffer = "";
+    try {
+      const generativeModel = client.getGenerativeModel({
+        model: candidate,
+        generationConfig: {
+          temperature,
+          maxOutputTokens,
         },
-      ]);
+        tools: [{ functionDeclarations: tools }],
+      });
+
+      const chat = generativeModel.startChat({
+        tools: [{ functionDeclarations: tools }],
+      });
+
+      const streamResult = await withTimeout(
+        chat.sendMessageStream(prompt),
+        MODEL_TIMEOUT_STREAM_MS
+      );
+
+      for await (const chunk of streamResult.stream) {
+        const piece = chunk.text();
+        if (piece) {
+          buffer += piece;
+          onDelta(piece);
+        }
+      }
+
+      const aggregated = await streamResult.response;
+      let calls = (aggregated.functionCalls() ?? []) as Array<{
+        name: string;
+        args: object;
+      }>;
+
+      for (let round = 0; round < MAX_TOOL_ROUNDS && calls.length; round++) {
+        for (const call of calls) {
+          const outcome = await runTool(call.name, call.args, toolContext);
+          const next = await withTimeout(
+            chat.sendMessageStream([
+              {
+                functionResponse: {
+                  name: call.name,
+                  response: outcome.ok
+                    ? { ok: true, ...(outcome.data ?? {}) }
+                    : { ok: false, error: outcome.error ?? "Tool failed" },
+                },
+              },
+            ] as never),
+            MODEL_TIMEOUT_STREAM_MS
+          );
+
+          for await (const chunk of next.stream) {
+            const piece = chunk.text();
+            if (piece) {
+              buffer += piece;
+              onDelta(piece);
+            }
+          }
+          const nextAgg = await next.response;
+          calls = (nextAgg.functionCalls() ?? []) as Array<{
+            name: string;
+            args: object;
+          }>;
+        }
+      }
+
+      const text = buffer.trim();
+      if (!text) {
+        throw new GeminiUnavailableError("Empty AI response");
+      }
+      return text;
+    } catch (error: unknown) {
+      lastError = error;
+      console.error(
+        `[ai-error] scope=tool-call-stream model=${candidate} message=${
+          error instanceof Error ? error.message.slice(0, 160) : "unknown"
+        }`
+      );
     }
   }
 
-  const text = full.trim();
-  if (!text) {
-    throw new GeminiUnavailableError("Empty AI response");
-  }
-  return text;
+  throw new GeminiUnavailableError(
+    lastError instanceof Error ? lastError.message : "AIServiceUnavailable"
+  );
 }
+

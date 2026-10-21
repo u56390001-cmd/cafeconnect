@@ -1,9 +1,10 @@
-import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
+﻿import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { resolveWidget, checkRateLimit } from "@/lib/widget/service";
 import { respondToCustomer } from "@/lib/ai/orchestrator";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest): Promise<Response> {
   try {
@@ -46,3 +47,4 @@ export async function POST(request: NextRequest): Promise<Response> {
     return handleApiError("api/widget/message", error);
   }
 }
+
