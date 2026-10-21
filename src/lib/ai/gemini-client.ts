@@ -33,9 +33,9 @@ export async function generateGeminiText({
   temperature?: number;
   maxOutputTokens?: number;
 }): Promise<string> {
-  const client = getGeminiClient(apiKey);
+  const client = getGeminiClient(apiKey.trim());
   const generativeModel = client.getGenerativeModel({
-    model,
+    model: model.trim(),
     generationConfig: {
       temperature,
       maxOutputTokens,
