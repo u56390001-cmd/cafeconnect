@@ -672,6 +672,18 @@ export function ChatWidget({
             <p className="truncate text-[11px] opacity-85">{subtitle}</p>
           ) : null}
         </div>
+        {features.showStorefrontLink ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 text-white hover:bg-white/15"
+            asChild
+          >
+            <a href={`/store?key=${encodeURIComponent(key)}`} target="_blank" rel="noreferrer">
+              Menu
+            </a>
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           size="icon"

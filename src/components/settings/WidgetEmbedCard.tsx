@@ -36,7 +36,17 @@ export function WidgetEmbedCard({ tenantId }: Props) {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const widgetUrl = publicWidgetId ? `${origin}/widget?key=${publicWidgetId}` : "";
   const storeUrl = publicWidgetId ? `${origin}/store?key=${publicWidgetId}` : "";
-  const chatSnippet = publicWidgetId
+  const loaderSnippet = publicWidgetId
+    ? `<script
+  async
+  src="${origin}/widget-loader.js"
+  data-widget-id="${publicWidgetId}"
+  data-position="bottom-right"
+  data-theme="light"
+  data-mobile="fullscreen"
+></script>`
+    : "";
+  const iframeSnippet = publicWidgetId
     ? `<iframe src="${widgetUrl}" style="border:0;position:fixed;bottom:16px;right:16px;width:380px;height:560px;max-width:100vw;max-height:80vh;z-index:9999;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.15)" title="Chat" allow="clipboard-write"></iframe>`
     : "";
   const storeSnippet = publicWidgetId
@@ -82,9 +92,16 @@ export function WidgetEmbedCard({ tenantId }: Props) {
               open
             />
             <Section
-              label="Embed chat widget (paste before </body>)"
-              value={chatSnippet}
-              onCopy={() => void copy(chatSnippet, "chat")}
+              label="Embed chat widget - recommended loader (paste before </body>)"
+              value={loaderSnippet}
+              onCopy={() => void copy(loaderSnippet, "loader")}
+              copied={copied === "loader"}
+              multiline
+            />
+            <Section
+              label="Embed chat widget - plain iframe"
+              value={iframeSnippet}
+              onCopy={() => void copy(iframeSnippet, "chat")}
               copied={copied === "chat"}
               multiline
             />
@@ -96,8 +113,10 @@ export function WidgetEmbedCard({ tenantId }: Props) {
               multiline
             />
             <p className="text-xs text-muted-foreground">
-              The widget key is safe to publish — it only resolves your public
-              chat/store, never private data or credentials.
+              The loader is asynchronous, isolates the widget from your site
+              CSS, and works on static HTML, WordPress and Shopify. Only the
+              public widget key is used - it exposes no keys and no private
+              data.
             </p>
           </>
         )}
