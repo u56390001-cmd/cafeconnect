@@ -11,6 +11,7 @@ import {
   LogOut,
   MessageSquare,
   Settings,
+  ShoppingBasket,
   Sparkles,
   Store,
   Tag,
@@ -25,6 +26,7 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
+  { name: "POS", href: "/dashboard/pos", icon: ShoppingBasket },
   { name: "Menu", href: "/dashboard/menu", icon: Utensils },
   { name: "Offers", href: "/dashboard/offers", icon: Tag },
   { name: "Orders", href: "/dashboard/orders", icon: ClipboardList },

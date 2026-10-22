@@ -20,6 +20,8 @@ export interface OrderItemInput {
    * the server.
    */
   selections?: ItemSelection[];
+  /** Optional kitchen note for this line (POS order taking). */
+  note?: string;
 }
 
 /**
@@ -674,6 +676,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
         entry.quantity
       ),
       options: options.resolved,
+      ...(entry.note ? { note: String(entry.note).slice(0, 200) } : {}),
     });
     lineItems.push({
       itemId: entry.itemId,

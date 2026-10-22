@@ -43,6 +43,8 @@ export interface CartItem {
   selections: ItemSelection[];
   /** Resolved option names/prices, snapshotted for the customer view. */
   options: ResolvedSelection[];
+  /** Optional kitchen note for this line (POS order taking). */
+  note?: string;
 }
 
 /**
@@ -220,8 +222,9 @@ function mergeItems(
     itemId: string;
     quantity: number;
     selections?: ItemSelection[];
+    note?: string;
   }>,
-  operation: "add" | "set" | "remove"
+  operation: "add" | "set" | "remove" | "replace"
 ): CartItem[] {
   const lines = new Map<string, CartItem>();
   for (const line of current) {
@@ -250,6 +253,7 @@ function mergeItems(
             lineTotalMinor: 0,
             selections,
             options: [],
+            note: entry.note,
           }),
           quantity: entry.quantity,
         });
@@ -266,6 +270,7 @@ function mergeItems(
         lineTotalMinor: 0,
         selections,
         options: [],
+        note: entry.note,
       }),
       quantity,
     });
@@ -281,11 +286,12 @@ function mergeItems(
 export async function updateCart(input: {
   tenantId: string;
   cartId: string;
-  operation: "add" | "remove" | "set" | "clear";
+  operation: "add" | "remove" | "set" | "clear" | "replace";
   items?: Array<{
     itemId: string;
     quantity: number;
     selections?: ItemSelection[];
+    note?: string;
   }>;
   fulfilmentType?: "delivery" | "pickup";
   address?: string;
@@ -307,6 +313,25 @@ export async function updateCart(input: {
   let items = cart.items ?? [];
   if (input.operation === "clear") {
     items = [];
+  } else if (input.operation === "replace") {
+    items = [];
+    // Continue into merge below so the replacement lines are priced.
+    if (input.items && input.items.length > 0) {
+      const normalized = input.items.map((entry) => ({
+        itemId: String(entry.itemId ?? ""),
+        quantity: Math.trunc(Number(entry.quantity ?? 0)),
+        selections: normalizeSelections(entry.selections),
+      }));
+      for (const entry of normalized) {
+        if (!entry.itemId) {
+          throw new CartError("INVALID_ITEM_ID", "Invalid item id");
+        }
+        if (entry.quantity < 0 || entry.quantity > 20) {
+          throw new CartError("INVALID_QUANTITY", "Invalid quantity");
+        }
+      }
+      items = mergeItems([], normalized, "set");
+    }
   } else if (input.items && input.items.length > 0) {
     const normalized = input.items.map((entry) => ({
       itemId: String(entry.itemId ?? ""),
@@ -370,6 +395,7 @@ export async function updateCart(input: {
       ),
       selections: line.selections ?? [],
       options: validation.resolved,
+      ...(line.note ? { note: String(line.note).slice(0, 200) } : {}),
     });
   }
 
