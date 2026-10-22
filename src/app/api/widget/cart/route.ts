@@ -14,6 +14,7 @@ import {
 import { normalizePhone } from "@/lib/domain/phone";
 import { createTrackingToken } from "@/lib/tracking/token";
 import { tenantDoc } from "@/lib/tenancy/resolver";
+import { recordWidgetEvent } from "@/lib/analytics/events";
 
 export const dynamic = "force-dynamic";
 
@@ -235,6 +236,17 @@ export async function POST(request: NextRequest): Promise<Response> {
       const trackingToken = createTrackingToken(config.tenantId, result.orderId);
       const trackUrl = `/track?key=${encodeURIComponent(key)}&token=${encodeURIComponent(trackingToken)}`;
 
+      await recordWidgetEvent({
+        tenantId: config.tenantId,
+        event: "order_created",
+        dimensions: {
+          channel: "web",
+          fulfilmentType,
+          itemCount: cart.items.reduce((sum, line) => sum + line.quantity, 0),
+          outcome: result.duplicate ? "duplicate" : "created",
+        },
+      });
+
       return createApiResponse({
         order: {
           orderId: result.orderId,
@@ -277,7 +289,22 @@ export async function POST(request: NextRequest): Promise<Response> {
           body.fulfilmentType === "pickup" ? "pickup" : "delivery",
         address: typeof body.address === "string" ? body.address : undefined,
         notes: typeof body.notes === "string" ? body.notes : undefined,
-        currency: currency,
+        currency,
+      });
+
+      await recordWidgetEvent({
+        tenantId: config.tenantId,
+        event: operation === "add" ? "product_added" : "cart_item_updated",
+        dimensions: {
+          channel: "web",
+          itemCount: items.reduce(
+            (sum, item) => sum + (Number(item.quantity) || 0),
+            0
+          ),
+          hasOptions: items.some(
+            (item) => normalizeSelections(item.selections).length > 0
+          ),
+        },
       });
     }
 

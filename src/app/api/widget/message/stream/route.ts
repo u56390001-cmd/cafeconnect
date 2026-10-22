@@ -3,6 +3,7 @@ import { resolveWidget, checkRateLimit } from "@/lib/widget/service";
 import { checkSharedRateLimit } from "@/lib/security/rate-limit";
 import { respondToCustomer } from "@/lib/ai/orchestrator";
 import { createTrackingToken } from "@/lib/tracking/token";
+import { recordWidgetEvent } from "@/lib/analytics/events";
 import type { WidgetBlock } from "@/lib/widget/ui-contract";
 
 export const dynamic = "force-dynamic";
@@ -131,6 +132,29 @@ export async function POST(request: NextRequest): Promise<Response> {
           send({ type: "blocks", blocks });
         }
 
+        const handoffBlock = blocks.find((block) => block.type === "handoff");
+        if (handoffBlock) {
+          await recordWidgetEvent({
+            tenantId: config.tenantId,
+            event: "handoff_requested",
+            dimensions: { channel: "web" },
+          });
+        }
+        const productBlock = blocks.find(
+          (block) =>
+            block.type === "product_carousel" || block.type === "product_list"
+        );
+        if (productBlock && "products" in productBlock) {
+          await recordWidgetEvent({
+            tenantId: config.tenantId,
+            event: "product_results_shown",
+            dimensions: {
+              channel: "web",
+              productCount: productBlock.products.length,
+            },
+          });
+        }
+
         send({
           type: "done",
           conversationId: result.conversationId,
@@ -138,6 +162,11 @@ export async function POST(request: NextRequest): Promise<Response> {
           requestId: result.requestId,
         });
       } catch (error: unknown) {
+        await recordWidgetEvent({
+          tenantId: config.tenantId,
+          event: "widget_error",
+          dimensions: { channel: "web" },
+        });
         send({
           type: "error",
           message:

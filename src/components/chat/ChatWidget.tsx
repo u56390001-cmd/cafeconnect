@@ -254,6 +254,37 @@ export function ChatWidget({
     };
   }, [key, conversationId]);
 
+  /** Structural analytics only - never message content. */
+  const track = useCallback(
+    (event: string, dimensions?: Record<string, string | number | boolean>) => {
+      if (!key) return;
+      const payload = JSON.stringify({ key, event, dimensions });
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(
+            "/api/widget/events",
+            new Blob([payload], { type: "application/json" })
+          );
+          return;
+        }
+      } catch {
+        // fall through to fetch
+      }
+      void fetch("/api/widget/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true,
+      }).catch(() => undefined);
+    },
+    [key]
+  );
+
+  useEffect(() => {
+    if (!key) return;
+    track("widget_opened", { channel: "web" });
+  }, [key, track]);
+
   useEffect(() => {
     scroller.current?.scrollTo({
       top: scroller.current.scrollHeight,
@@ -518,6 +549,11 @@ export function ChatWidget({
     }) => {
       setSubmitting(true);
       setCheckoutError(null);
+      track("checkout_started", {
+        channel: "web",
+        fulfilmentType: details.fulfilmentType,
+        itemCount: cart?.itemCount ?? 0,
+      });
       try {
         const data = await pushCart("checkout", details);
         if (data?.order) {
@@ -567,7 +603,7 @@ export function ChatWidget({
         setSubmitting(false);
       }
     },
-    [pushCart, cart]
+    [pushCart, cart, track]
   );
 
   const promptChips = useMemo(() => {
@@ -773,7 +809,10 @@ export function ChatWidget({
               <div className="pl-8">
                 <QuickReplies
                   items={promptChips.map((label) => ({ id: label, label }))}
-                  onSelect={(label) => void send(label)}
+                  onSelect={(label) => {
+                    track("starter_prompt_clicked", { channel: "web" });
+                    void send(label);
+                  }}
                 />
               </div>
             </div>
@@ -798,7 +837,10 @@ export function ChatWidget({
               size="sm"
               variant="outline"
               className="h-9"
-              onClick={() => setCartOpen(true)}
+              onClick={() => {
+                track("cart_opened", { channel: "web" });
+                setCartOpen(true);
+              }}
             >
               View cart
             </Button>

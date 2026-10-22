@@ -727,9 +727,6 @@ async function buildWidgetBlocks(input: {
   handoff: string | null;
   message: string;
 }): Promise<WidgetBlock[]> {
-  // Rich presentation is a web-widget feature; WhatsApp uses text.
-  if (input.channel !== "web") return [];
-
   const blocks: WidgetBlock[] = [];
 
   try {

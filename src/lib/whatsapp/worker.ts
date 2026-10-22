@@ -2,7 +2,49 @@ import { respondToCustomer } from "@/lib/ai/orchestrator";
 import { detectLanguage, stringsFor } from "@/lib/ai/language";
 import { getTenantApiKey } from "@/lib/settings/keys";
 import { sendMetaText, type MetaInboundMessage } from "./meta-cloud";
-import { sendQrText, normalizePhone } from "./qr-provider";
+import {
+  formatProductListText,
+  supports,
+  type ChannelName,
+} from "@/lib/channels/capabilities";
+import { recordWidgetEvent } from "@/lib/analytics/events";
+import type { OutboundReply } from "@/lib/ai/orchestrator";
+
+/**
+ * Channels without interactive messages get a readable text list of the
+ * verified products instead of cards. Ordering never depends on a rich
+ * message being available.
+ */
+async function withProductListText(
+  reply: OutboundReply,
+  channel: ChannelName,
+  tenantId: string
+): Promise<string> {
+  if (supports(channel, "catalogProducts") && supports(channel, "listMessages")) {
+    return reply.reply;
+  }
+  const productBlock = (reply.ui ?? []).find(
+    (block) => block.type === "product_carousel" || block.type === "product_list"
+  );
+  if (!productBlock || !("products" in productBlock)) {
+    return reply.reply;
+  }
+  const list = formatProductListText(
+    productBlock.products.map((product) => ({
+      name: product.name,
+      priceLabel: product.priceLabel,
+    }))
+  );
+  if (!list) return reply.reply;
+
+  await recordWidgetEvent({
+    tenantId,
+    event: "whatsapp_interactive_fallback_used",
+    dimensions: { channel },
+  }).catch(() => undefined);
+
+  return `${reply.reply}\n\n${list}`;
+}import { sendQrText, normalizePhone } from "./qr-provider";
 import { checkTrialAllowed } from "./qr-trial";
 import {
   getInboxEvent,
@@ -80,8 +122,10 @@ async function processQrEvent(event: InboxEvent): Promise<ProcessResult> {
     return { eventId: event.eventId, status: "skipped", reason: "staff_owned" };
   }
 
-  await sendQrText(providerToken, customerReference, reply.reply);
-  if (acknowledged) {
+  // WhatsApp cannot render product cards. When the assistant produced
+  // verified products, they are sent as a short numbered list instead.
+  const qrText = await withProductListText(reply, "whatsapp_qr", event.tenantId);
+  await sendQrText(providerToken, customerReference, qrText);  if (acknowledged) {
     console.log(
       `[whatsapp-worker] tenant=${event.tenantId} event=${event.eventId} acknowledged=true`
     );
@@ -128,7 +172,7 @@ async function processMetaEvent(event: InboxEvent): Promise<ProcessResult> {
     accessToken,
     phoneNumberId,
     to: event.customerReference,
-    text: reply.reply,
+    text: await withProductListText(reply, "whatsapp_meta", event.tenantId),
   });
 
   await markInboxEvent(event.tenantId, event.eventId, {
