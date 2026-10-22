@@ -3,13 +3,18 @@ import { checkSharedRateLimit } from "@/lib/security/rate-limit";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { quoteOrder, OrderError, type OrderErrorCode } from "@/lib/services/orders";
 import { normalizePhone } from "@/lib/domain/phone";
+import { normalizeSelections } from "@/lib/services/carts";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
 interface QuoteBody {
   key?: string;
-  items?: Array<{ itemId?: string; quantity?: number }>;
+  items?: Array<{
+    itemId?: string;
+    quantity?: number;
+    selections?: unknown;
+  }>;
   fulfilmentType?: string;
   address?: string;
 }
@@ -45,6 +50,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       ? body.items.map((item) => ({
           itemId: String(item.itemId ?? ""),
           quantity: Number(item.quantity ?? 0),
+          selections: normalizeSelections(item.selections),
         }))
       : [];
 

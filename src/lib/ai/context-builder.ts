@@ -1,4 +1,5 @@
 ﻿import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
+import { optionGroupsOf } from "@/lib/domain/options";
 import { Timestamp } from "firebase-admin/firestore";
 
 export interface MenuContext {
@@ -255,6 +256,21 @@ async function buildTenantAiContext(
     const aliases = Array.isArray(d.aliases)
       ? (d.aliases as string[]).filter(Boolean).slice(0, 8)
       : [];
+    const optionGroups = optionGroupsOf(d)
+      .filter((group) => group.options.length > 0)
+      .map((group) => ({
+        groupId: group.groupId,
+        name: group.name,
+        type: group.type,
+        required: group.required,
+        minSelections: group.minSelections,
+        maxSelections: group.maxSelections,
+        options: group.options.map((option) => ({
+          optionId: option.optionId,
+          name: option.name,
+          priceLabel: `${currency} ${(option.priceDeltaMinor / 100).toFixed(0)}`,
+        })),
+      }));
     return {
       itemId: String(d.itemId || d.id || ""),
       categoryName: categoriesMap.get(String(d.categoryId || "")) ?? "Other",
@@ -263,6 +279,7 @@ async function buildTenantAiContext(
       priceLabel: `${currency} ${(minor / 100).toFixed(0)}`,
       availability: String(d.availability || "available"),
       aliases,
+      ...(optionGroups.length > 0 ? { optionGroups } : {}),
     };
   });
 

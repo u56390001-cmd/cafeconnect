@@ -15,6 +15,22 @@ import type { StoreItem } from "@/app/store/types";
 export interface CartLine {
   itemId: string;
   quantity: number;
+  /** Chosen options (ids only - the server resolves names and prices). */
+  selections?: Array<{ groupId: string; optionIds: string[] }>;
+  /** Resolved option labels for the customer view. */
+  optionLabels?: string[];
+}
+
+/** A cart line is identified by the product and the chosen options. */
+export function cartLineKey(line: CartLine): string {
+  const signature = (line.selections ?? [])
+    .map(
+      (selection) =>
+        `${selection.groupId}:${selection.optionIds.slice().sort().join(",")}`
+    )
+    .sort()
+    .join("|");
+  return signature ? `${line.itemId}::${signature}` : line.itemId;
 }
 
 export interface CheckoutDetails {
@@ -50,8 +66,8 @@ interface CartSheetProps {
   paymentMethods: string;
   fulfilmentType: "delivery" | "pickup";
   onFulfilmentChange: (value: "delivery" | "pickup") => void;
-  onQuantityChange: (itemId: string, quantity: number) => void;
-  onRemove: (itemId: string) => void;
+  onQuantityChange: (lineKey: string, quantity: number) => void;
+  onRemove: (lineKey: string) => void;
   subtotalMinor: number;
   quote: QuoteResult | null;
   quoteError: string | null;
@@ -111,25 +127,44 @@ export function CartSheet({
               {lines.map((line) => {
                 const item = itemFor(line.itemId);
                 if (!item) return null;
+                const lineKey = cartLineKey(line);
+                const unitMinor =
+                  item.priceMinor +
+                  (line.selections ?? []).reduce((sum, selection) => {
+                    const group = item.optionGroups?.find(
+                      (g) => g.groupId === selection.groupId
+                    );
+                    if (!group) return sum;
+                    return (
+                      sum +
+                      selection.optionIds.reduce((optionSum, optionId) => {
+                        const option = group.options.find(
+                          (o) => o.optionId === optionId
+                        );
+                        return optionSum + (option?.priceDeltaMinor ?? 0);
+                      }, 0)
+                    );
+                  }, 0);
                 return (
                   <li
-                    key={line.itemId}
+                    key={lineKey}
                     className="flex flex-col gap-2 border-b border-border pb-3 last:border-b-0"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-sm font-medium">{item.name}</p>
-                        {item.description ? (
+                        {line.optionLabels?.length ? (
+                          <p className="text-xs text-muted-foreground">
+                            {line.optionLabels.join(" · ")}
+                          </p>
+                        ) : item.description ? (
                           <p className="text-xs text-muted-foreground">
                             {item.description}
                           </p>
                         ) : null}
                       </div>
                       <p className="shrink-0 text-sm font-medium">
-                        {formatMoney(
-                          item.priceMinor * line.quantity,
-                          currency
-                        )}
+                        {formatMoney(unitMinor * line.quantity, currency)}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
@@ -140,7 +175,7 @@ export function CartSheet({
                           className="size-9"
                           aria-label={`Remove one ${item.name}`}
                           onClick={() =>
-                            onQuantityChange(item.itemId, line.quantity - 1)
+                            onQuantityChange(lineKey, line.quantity - 1)
                           }
                         >
                           <Minus />
@@ -154,7 +189,7 @@ export function CartSheet({
                           className="size-9"
                           aria-label={`Add one ${item.name}`}
                           onClick={() =>
-                            onQuantityChange(item.itemId, line.quantity + 1)
+                            onQuantityChange(lineKey, line.quantity + 1)
                           }
                         >
                           <Plus />
@@ -164,7 +199,7 @@ export function CartSheet({
                         variant="ghost"
                         size="sm"
                         className="ml-auto text-muted-foreground"
-                        onClick={() => onRemove(item.itemId)}
+                        onClick={() => onRemove(lineKey)}
                       >
                         <Trash2 data-icon="inline-start" />
                         Remove

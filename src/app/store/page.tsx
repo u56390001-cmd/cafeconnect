@@ -11,10 +11,15 @@ import { Empty } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
 import {
   CartSheet,
+  cartLineKey,
   type CartLine,
   type CheckoutDetails,
   type QuoteResult,
 } from "@/components/store/CartSheet";
+import {
+  ProductSheet,
+  type ProductSelection,
+} from "@/components/store/ProductSheet";
 import { formatMoney } from "@/lib/domain/money";
 import { normalizePhone } from "@/lib/domain/phone";
 import type { StoreCatalog, StoreItem } from "./types";
@@ -41,8 +46,13 @@ const emptyDetails: CheckoutDetails = {
   notes: "",
 };
 
-function newIdempotencyKey(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+function hasOptions(item: StoreItem): boolean {
+  return (item.optionGroups ?? []).some(
+    (group) => group.active !== false && group.options.length > 0
+  );
+}
+
+function newIdempotencyKey(): string {  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `sk_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
   }
   return `sk_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
@@ -93,6 +103,7 @@ export default function StorePage() {
     trackUrl: string | null;
   } | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  const [detailItem, setDetailItem] = useState<StoreItem | null>(null);
 
   // Resolve the store key from the URL, then load the catalogue.
   useEffect(() => {
@@ -173,7 +184,21 @@ export default function StorePage() {
     if (!catalog) return 0;
     return lines.reduce((sum, line) => {
       const item = catalog.items.find((i) => i.itemId === line.itemId);
-      return sum + (item ? item.priceMinor * line.quantity : 0);
+      if (!item) return sum;
+      const delta = (line.selections ?? []).reduce((optionSum, selection) => {
+        const group = item.optionGroups?.find(
+          (g) => g.groupId === selection.groupId
+        );
+        if (!group) return optionSum;
+        return (
+          optionSum +
+          selection.optionIds.reduce((inner, optionId) => {
+            const option = group.options.find((o) => o.optionId === optionId);
+            return inner + (option?.priceDeltaMinor ?? 0);
+          }, 0)
+        );
+      }, 0);
+      return sum + (item.priceMinor + delta) * line.quantity;
     }, 0);
   }, [catalog, lines]);
 
@@ -184,16 +209,17 @@ export default function StorePage() {
   }, []);
 
   const changeQuantity = useCallback(
-    (itemId: string, quantity: number) => {
+    (lineKey: string, quantity: number) => {
       setLines((current) => {
         const next = current
           .map((line) =>
-            line.itemId === itemId
+            cartLineKey(line) === lineKey
               ? { ...line, quantity: Math.max(0, Math.min(MAX_QUANTITY, quantity)) }
               : line
           )
           .filter((line) => line.quantity > 0);
-        const item = catalog?.items.find((i) => i.itemId === itemId);
+        const target = current.find((line) => cartLineKey(line) === lineKey);
+        const item = catalog?.items.find((i) => i.itemId === target?.itemId);
         if (quantity > 0 && item) {
           announce(`${item.name} quantity ${quantity}`);
         }
@@ -208,8 +234,10 @@ export default function StorePage() {
   );
 
   const removeLine = useCallback(
-    (itemId: string) => {
-      setLines((current) => current.filter((line) => line.itemId !== itemId));
+    (lineKey: string) => {
+      setLines((current) =>
+        current.filter((line) => cartLineKey(line) !== lineKey)
+      );
       setQuote(null);
       setRevision((r) => r + 1);
       setIdempotencyKey(newIdempotencyKey());
@@ -219,21 +247,45 @@ export default function StorePage() {
   );
 
   const addItem = useCallback(
-    (item: StoreItem) => {
+    (
+      item: StoreItem,
+      selections: ProductSelection[] = [],
+      quantity = 1
+    ) => {
+      const optionLabels = selections
+        .flatMap((selection) => {
+          const group = item.optionGroups?.find(
+            (g) => g.groupId === selection.groupId
+          );
+          if (!group) return [];
+          return selection.optionIds
+            .map(
+              (optionId) =>
+                group.options.find((o) => o.optionId === optionId)?.name
+            )
+            .filter((name): name is string => Boolean(name));
+        });
+      const line: CartLine = {
+        itemId: item.itemId,
+        quantity: Math.min(MAX_QUANTITY, Math.max(1, quantity)),
+        selections,
+        optionLabels,
+      };
       setLines((current) => {
-        const existing = current.find((line) => line.itemId === item.itemId);
+        const key = cartLineKey(line);
+        const existing = current.find((entry) => cartLineKey(entry) === key);
         if (existing) {
-          return current.map((line) =>
-            line.itemId === item.itemId
+          return current.map((entry) =>
+            cartLineKey(entry) === key
               ? {
-                  ...line,
-                  quantity: Math.min(MAX_QUANTITY, line.quantity + 1),
+                  ...entry,
+                  quantity: Math.min(MAX_QUANTITY, entry.quantity + line.quantity),
                 }
-              : line
+              : entry
           );
         }
         if (current.length >= MAX_LINES) return current;
-        return [...current, { itemId: item.itemId, quantity: 1 }];
+        return [...current, line];
       });
       setQuote(null);
       setRevision((r) => r + 1);
@@ -480,7 +532,8 @@ export default function StorePage() {
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
           {visibleItems.map((item) => {
-            const line = lines.find((l) => l.itemId === item.itemId);
+            const itemLines = lines.filter((l) => l.itemId === item.itemId);
+            const line = itemLines[0];
             const image = item.imageReferences?.[0];
             return (
               <li
@@ -502,7 +555,17 @@ export default function StorePage() {
                 <div className="flex flex-1 flex-col justify-between gap-3 p-4">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="font-medium">{item.name}</p>
+                      {hasOptions(item) ? (
+                        <button
+                          type="button"
+                          onClick={() => setDetailItem(item)}
+                          className="text-left font-medium underline-offset-2 hover:underline"
+                        >
+                          {item.name}
+                        </button>
+                      ) : (
+                        <p className="font-medium">{item.name}</p>
+                      )}
                       <p className="shrink-0 font-medium tabular-nums">
                         {formatMoney(item.priceMinor, currency)}
                       </p>
@@ -524,13 +587,22 @@ export default function StorePage() {
                     ) : null}
                   </div>
                   <div className="flex items-center gap-2">
-                    {line ? (
+                    {hasOptions(item) ? (
+                      <Button size="sm" onClick={() => setDetailItem(item)}>
+                        {itemLines.length > 0
+                          ? `Options (${itemLines.reduce((sum, l) => sum + l.quantity, 0)})`
+                          : "Choose options"}
+                      </Button>
+                    ) : line ? (
                       <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() =>
-                            changeQuantity(item.itemId, line.quantity - 1)
+                            changeQuantity(
+                              cartLineKey(line),
+                              line.quantity - 1
+                            )
                           }
                         >
                           −
@@ -542,7 +614,10 @@ export default function StorePage() {
                           variant="outline"
                           size="sm"
                           onClick={() =>
-                            changeQuantity(item.itemId, line.quantity + 1)
+                            changeQuantity(
+                              cartLineKey(line),
+                              line.quantity + 1
+                            )
                           }
                         >
                           +
@@ -606,6 +681,19 @@ export default function StorePage() {
         fieldError={fieldError}
         submitting={submitting}
         onSubmit={() => void submitOrder()}
+      />
+
+      <ProductSheet
+        open={detailItem !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetailItem(null);
+        }}
+        item={detailItem}
+        currency={currency}
+        onAdd={(item, selections, quantity) => {
+          addItem(item, selections, quantity);
+          setDetailItem(null);
+        }}
       />
     </main>
   );

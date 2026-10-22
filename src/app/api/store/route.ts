@@ -1,6 +1,8 @@
 import { resolveWidget, checkRateLimit } from "@/lib/widget/service";
 import { checkSharedRateLimit } from "@/lib/security/rate-limit";
 import { createOrder, type OrderItemInput } from "@/lib/services/orders";
+import { normalizeSelections } from "@/lib/services/carts";
+import { optionGroupsOf } from "@/lib/domain/options";
 import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
@@ -104,6 +106,7 @@ export async function GET(request: NextRequest): Promise<Response> {
           description: d.description || "",
           priceMinor: Number(d.basePriceMinor),
           imageReferences: d.imageReferences ?? [],
+          optionGroups: optionGroupsOf(d),
           spiceLevel: d.spiceLevel ?? "",
           dietaryLabels: d.dietaryLabels ?? [],
           portion: d.portion ?? "",
@@ -150,10 +153,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     const validItems: OrderItemInput[] = Array.isArray(items)
-      ? items.map((i: { itemId?: unknown; quantity?: unknown }) => ({
-          itemId: String(i.itemId ?? ""),
-          quantity: Number(i.quantity ?? 0),
-        }))
+      ? items.map(
+          (i: { itemId?: unknown; quantity?: unknown; selections?: unknown }) => ({
+            itemId: String(i.itemId ?? ""),
+            quantity: Number(i.quantity ?? 0),
+            selections: normalizeSelections(i.selections),
+          })
+        )
       : [];
 
     const validated = {

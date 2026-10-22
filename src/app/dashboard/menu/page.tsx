@@ -19,6 +19,7 @@ import {
 } from "@/components/menu/ItemFormSheet";
 import { formatMoney } from "@/lib/domain/money";
 import type { ImageReference } from "@/lib/media/images";
+import type { ProductOptionGroup } from "@/lib/domain/options";
 
 interface MenuItemView {
   itemId: string;
@@ -35,6 +36,7 @@ interface MenuItemView {
   dietaryLabels: string[];
   portion: string;
   imageReferences: ImageReference[];
+  optionGroups?: ProductOptionGroup[];
 }
 
 const AVAILABILITY_LABEL: Record<string, string> = {
@@ -283,6 +285,20 @@ export default function MenuPage() {
       publicationStatus:
         (item.publicationStatus as MenuItemDraft["publicationStatus"]) ?? "draft",
       imageReferences: item.imageReferences ?? [],
+      optionGroups: (item.optionGroups ?? []).map((group) => ({
+        groupId: group.groupId,
+        name: group.name,
+        type: group.type,
+        required: group.required,
+        minSelections: group.minSelections,
+        maxSelections: group.maxSelections,
+        options: group.options.map((option) => ({
+          optionId: option.optionId,
+          name: option.name,
+          priceRupees: String(option.priceDeltaMinor / 100),
+          active: option.active,
+        })),
+      })),
     });
     setSheetOpen(true);
   }
@@ -300,6 +316,7 @@ export default function MenuPage() {
       availability: "available",
       publicationStatus: "published",
       imageReferences: [],
+      optionGroups: [],
     });
     setSheetOpen(true);
   }

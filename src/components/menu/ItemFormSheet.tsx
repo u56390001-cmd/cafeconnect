@@ -11,6 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { authFetch } from "@/context/AuthContext";
 import type { ImageReference } from "@/lib/media/images";
+import {
+  OptionGroupsEditor,
+  type OptionGroupDraft,
+} from "@/components/menu/OptionGroupsEditor";
 
 export interface MenuItemDraft {
   itemId?: string;
@@ -25,6 +29,7 @@ export interface MenuItemDraft {
   availability: "available" | "soldOut" | "paused";
   publicationStatus: "draft" | "published";
   imageReferences: ImageReference[];
+  optionGroups: OptionGroupDraft[];
 }
 
 export interface MenuCategoryOption {
@@ -143,6 +148,37 @@ export function ItemFormSheet({
       return;
     }
 
+    // Option groups are validated before they are sent: a group without a name
+    // or an option without a name would confuse the customer.
+    const optionGroups = (form.optionGroups ?? [])
+      .filter((group) => group.name.trim().length > 0)
+      .map((group) => ({
+        groupId: group.groupId,
+        name: group.name.trim(),
+        type: group.type,
+        required: group.required,
+        minSelections: group.required ? Math.max(1, group.minSelections) : group.minSelections,
+        maxSelections: Math.max(group.required ? 1 : 0, group.maxSelections),
+        active: true,
+        options: group.options
+          .filter((option) => option.name.trim().length > 0)
+          .map((option) => ({
+            optionId: option.optionId,
+            name: option.name.trim(),
+            priceDeltaMinor: Math.round(
+              (Number(option.priceRupees) || 0) * 100
+            ),
+            active: option.active,
+          })),
+      }))
+      .filter((group) => group.options.length > 0);
+    if ((form.optionGroups ?? []).length !== optionGroups.length) {
+      setError(
+        "Each option group needs a name and at least one named option."
+      );
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {
@@ -164,6 +200,7 @@ export function ItemFormSheet({
           .filter(Boolean),
         availability: form.availability,
         publicationStatus: form.publicationStatus,
+        optionGroups,
       };
 
       const res = await authFetch(
@@ -275,6 +312,11 @@ export function ItemFormSheet({
                 Helps customers and the AI agent match local spellings.
               </p>
             </div>
+
+            <OptionGroupsEditor
+              groups={form.optionGroups ?? []}
+              onChange={(optionGroups) => setForm({ ...form, optionGroups })}
+            />
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">

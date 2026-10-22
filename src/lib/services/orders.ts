@@ -3,10 +3,23 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { randomBytes } from "crypto";
 import { createHash } from "crypto";
 import { isFulfilmentType } from "@/lib/domain/order-status";
+import {
+  lineTotalMinor,
+  optionGroupsOf,
+  validateSelections,
+  type ItemSelection,
+  type ResolvedSelection,
+} from "@/lib/domain/options";
 
 export interface OrderItemInput {
   itemId: string;
   quantity: number;
+  /**
+   * Chosen options for this line. Only group/option ids are sent by the
+   * client; names and prices are resolved from the product configuration on
+   * the server.
+   */
+  selections?: ItemSelection[];
 }
 
 /**
@@ -25,6 +38,7 @@ export type OrderErrorCode =
   | "ITEM_NOT_FOUND"
   | "ITEM_UNAVAILABLE"
   | "ITEM_NOT_PUBLISHED"
+  | "INVALID_OPTIONS"
   | "MIN_ORDER_NOT_MET"
   | "OUT_OF_DELIVERY_AREA"
   | "DELIVERY_AREA_UNVERIFIED"
@@ -102,6 +116,26 @@ export interface QuoteLine {
   categoryId: string;
   unitPriceMinor: number;
   quantity: number;
+}
+
+/**
+ * Resolves the customer's option choices for one product against the current
+ * product configuration. Throws `INVALID_OPTIONS` when a choice is unknown,
+ * inactive or violates the group constraints.
+ */
+export function resolveItemOptions(
+  product: { name?: unknown; optionGroups?: unknown },
+  selections: ItemSelection[] | undefined,
+  itemId: string
+): { unitPriceMinor: number; resolved: ResolvedSelection[] } {
+  const groups = optionGroupsOf(product);
+  const result = validateSelections(groups, selections);
+  if (!result.ok) {
+    throw new OrderError("INVALID_OPTIONS", result.error ?? "Invalid options", {
+      itemId,
+    });
+  }
+  return { unitPriceMinor: result.priceDeltaMinor, resolved: result.resolved };
 }
 
 /**
@@ -184,6 +218,7 @@ export interface QuoteResult {
     quantity: number;
     unitPriceMinor: number;
     lineTotalMinor: number;
+    options: ResolvedSelection[];
   }>;
   subtotalMinor: number;
   discountMinor: number;
@@ -274,13 +309,16 @@ export async function quoteOrder(input: {
         itemName: d.name,
       });
     }
-    const unitPriceMinor = Number(d.basePriceMinor ?? 0);
+    const options = resolveItemOptions(d, entry.selections, entry.itemId);
+    const basePriceMinor = Number(d.basePriceMinor ?? 0);
+    const unitPriceMinor = basePriceMinor + options.unitPriceMinor;
     items.push({
       itemId: entry.itemId,
       name: String(d.name ?? ""),
       quantity: entry.quantity,
       unitPriceMinor,
-      lineTotalMinor: unitPriceMinor * entry.quantity,
+      lineTotalMinor: lineTotalMinor(basePriceMinor, options.unitPriceMinor, entry.quantity),
+      options: options.resolved,
     });
     lineItems.push({
       itemId: entry.itemId,
@@ -615,15 +653,27 @@ export async function createOrder(input: CreateOrderInput): Promise<{
         itemName: d.name,
       });
     }
-    const unitPriceMinor = Number(d.basePriceMinor ?? 0);
-    pricing.subtotalMinor += unitPriceMinor * entry.quantity;
+    const options = resolveItemOptions(d, entry.selections, entry.itemId);
+    const basePriceMinor = Number(d.basePriceMinor ?? 0);
+    const unitPriceMinor = basePriceMinor + options.unitPriceMinor;
+    pricing.subtotalMinor += lineTotalMinor(
+      basePriceMinor,
+      options.unitPriceMinor,
+      entry.quantity
+    );
     snapshots.push({
       itemId: entry.itemId,
       name: d.name,
       categoryId: d.categoryId ?? null,
       unitPriceMinor,
+      basePriceMinor,
       quantity: entry.quantity,
-      lineTotalMinor: unitPriceMinor * entry.quantity,
+      lineTotalMinor: lineTotalMinor(
+        basePriceMinor,
+        options.unitPriceMinor,
+        entry.quantity
+      ),
+      options: options.resolved,
     });
     lineItems.push({
       itemId: entry.itemId,

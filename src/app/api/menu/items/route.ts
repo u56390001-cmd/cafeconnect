@@ -7,6 +7,7 @@ import { createApiResponse, createApiError, handleApiError } from "@/lib/api/res
 import { invalidateAiContext } from "@/lib/ai/context-builder";
 import { getSession } from "@/lib/auth/session";
 import { NextRequest } from "next/server";
+import { parseOptionGroups, type ProductOptionGroup } from "@/lib/domain/options";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,7 @@ interface ItemPayload {
   dietaryLabels?: string[];
   portion?: string;
   publicationStatus?: PublicationStatus;
+  optionGroups?: ProductOptionGroup[];
 }
 
 function validatePayload(body: Partial<ItemPayload>): string | null {
@@ -50,6 +52,10 @@ function validatePayload(body: Partial<ItemPayload>): string | null {
     (typeof body.description !== "string" || body.description.length > 1000)
   ) {
     return "Invalid description";
+  }
+  if (body.optionGroups !== undefined) {
+    const parsed = parseOptionGroups(body.optionGroups);
+    if (!parsed.ok) return parsed.error;
   }
   return null;
 }
@@ -87,6 +93,7 @@ export async function GET(request: NextRequest): Promise<Response> {
           dietaryLabels: d.dietaryLabels ?? [],
           portion: d.portion ?? "",
           imageReferences: d.imageReferences ?? [],
+          optionGroups: d.optionGroups ?? [],
           updatedAt: d.updatedAt,
         };
       });
@@ -160,6 +167,10 @@ export async function POST(request: NextRequest): Promise<Response> {
             .slice(0, 20)
         : [],
       basePriceMinor: body.basePriceMinor,
+      optionGroups: (() => {
+        const parsed = parseOptionGroups(body.optionGroups);
+        return parsed.ok ? parsed.groups : [];
+      })(),
       availability,
       publicationStatus,
       imageReferences: [],
@@ -260,6 +271,11 @@ export async function PATCH(request: NextRequest): Promise<Response> {
     }
     if (body.portion !== undefined) {
       update.portion = String(body.portion ?? "").slice(0, 60);
+    }
+    if (body.optionGroups !== undefined) {
+      const parsed = parseOptionGroups(body.optionGroups);
+      if (!parsed.ok) return createApiError(parsed.error, 400);
+      update.optionGroups = parsed.groups;
     }
     if (body.publicationStatus !== undefined) {
       if (!PUBLICATION.includes(body.publicationStatus))

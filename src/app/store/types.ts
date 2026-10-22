@@ -3,6 +3,24 @@ export interface StoreCategory {
   name: string;
 }
 
+export interface StoreOption {
+  optionId: string;
+  name: string;
+  priceDeltaMinor: number;
+  active: boolean;
+}
+
+export interface StoreOptionGroup {
+  groupId: string;
+  name: string;
+  type: "single" | "multiple";
+  required: boolean;
+  minSelections: number;
+  maxSelections: number;
+  active: boolean;
+  options: StoreOption[];
+}
+
 export interface StoreItem {
   itemId: string;
   categoryId: string;
@@ -16,6 +34,7 @@ export interface StoreItem {
     width: number | null;
     height: number | null;
   }>;
+  optionGroups?: StoreOptionGroup[];
   spiceLevel?: string;
   dietaryLabels?: string[];
   portion?: string;

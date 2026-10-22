@@ -16,6 +16,7 @@ import {
 } from "@/lib/services/carts";
 import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { getCart } from "@/lib/services/carts";
+import { normalizeSelections } from "@/lib/services/carts";
 import { createBooking, BookingError } from "@/lib/services/bookings";
 import { stringsFor, type LanguageMode } from "@/lib/ai/language";
 
@@ -90,6 +91,19 @@ const updateCartDeclaration: ToolDeclaration = {
           properties: {
             itemId: { type: "STRING" },
             quantity: { type: "INTEGER" },
+            selections: {
+              type: "ARRAY",
+              description:
+                "Optional chosen options for this item. Use only the group/option ids that appear in the menu context.",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  groupId: { type: "STRING" },
+                  optionIds: { type: "ARRAY", items: { type: "STRING" } },
+                },
+                required: ["groupId", "optionIds"],
+              },
+            },
           },
           required: ["itemId", "quantity"],
         },
@@ -448,10 +462,15 @@ async function runUpdateCart(
 
   const rawItems = Array.isArray(args.items) ? args.items : [];
   const items = rawItems.map((entry) => {
-    const item = entry as { itemId?: unknown; quantity?: unknown };
+    const item = entry as {
+      itemId?: unknown;
+      quantity?: unknown;
+      selections?: unknown;
+    };
     return {
       itemId: String(item.itemId ?? ""),
       quantity: Number(item.quantity ?? 0),
+      selections: normalizeSelections(item.selections),
     };
   });
 
@@ -476,7 +495,19 @@ async function runUpdateCart(
       currency: context.currency,
     });
 
-    const lines = cart.items.map((line) => `${line.quantity}x ${line.name}`);
+    const lines = cart.items.map(
+      (line) =>
+        `${line.quantity}x ${line.name}${
+          line.options?.length
+            ? ` (${line.options
+                .map(
+                  (option) =>
+                    `${option.groupName}: ${option.optionNames.join(", ")}`
+                )
+                .join("; ")})`
+            : ""
+        }`
+    );
 
     return {
       ok: true,

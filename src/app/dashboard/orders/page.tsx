@@ -17,6 +17,10 @@ interface OrderItem {
   name: string;
   quantity: number;
   unitPriceMinor: number;
+  options?: Array<{
+    groupName: string;
+    optionNames: string[];
+  }>;
 }
 interface Order {
   orderId: string;
@@ -350,6 +354,17 @@ function OrdersPage() {
                         {order.items.map((item) => (
                           <li key={item.itemId}>
                             {item.quantity}× {item.name}
+                            {item.options?.length ? (
+                              <span className="text-xs text-muted-foreground">
+                                {" — "}
+                                {item.options
+                                  .map(
+                                    (option) =>
+                                      `${option.groupName}: ${(option.optionNames ?? []).join(", ")}`
+                                  )
+                                  .join(" · ")}
+                              </span>
+                            ) : null}
                           </li>
                         ))}
                       </ul>

@@ -7,6 +7,13 @@ import {
   type QuoteResult,
 } from "./orders";
 import { createHash } from "crypto";
+import {
+  lineTotalMinor,
+  optionGroupsOf,
+  validateSelections,
+  type ItemSelection,
+  type ResolvedSelection,
+} from "@/lib/domain/options";
 
 /**
  * Server-side cart with an explicit revision (Phase 2 of the blueprint).
@@ -32,6 +39,50 @@ export interface CartItem {
   quantity: number;
   unitPriceMinor: number;
   lineTotalMinor: number;
+  /** Chosen option ids for this line (server resolved). */
+  selections: ItemSelection[];
+  /** Resolved option names/prices, snapshotted for the customer view. */
+  options: ResolvedSelection[];
+}
+
+/**
+ * A cart line is identified by the product **and** the chosen options, so a
+ * burger with extra cheese and a plain burger stay separate lines.
+ */
+export function cartLineKey(itemId: string, selections: ItemSelection[]): string {
+  const signature = (selections ?? [])
+    .map(
+      (selection) =>
+        `${selection.groupId}:${(selection.optionIds ?? []).slice().sort().join(",")}`
+    )
+    .sort()
+    .join("|");
+  return signature ? `${itemId}::${signature}` : itemId;
+}
+
+/** Normalises untrusted option selections coming from a client or the model. */
+export function normalizeSelections(
+  selections: unknown
+): ItemSelection[] {
+  if (!Array.isArray(selections)) return [];
+  const result: ItemSelection[] = [];
+  for (const entry of selections) {
+    if (!entry || typeof entry !== "object") continue;
+    const groupId = String((entry as ItemSelection).groupId ?? "").trim();
+    if (!groupId || groupId.length > 64) continue;
+    const rawOptionIds = (entry as ItemSelection).optionIds;
+    const optionIds = Array.isArray(rawOptionIds)
+      ? Array.from(
+          new Set(
+            rawOptionIds
+              .map((id) => String(id ?? "").trim())
+              .filter((id) => id.length > 0 && id.length <= 64)
+          )
+        )
+      : [];
+    result.push({ groupId, optionIds });
+  }
+  return result;
 }
 
 export interface CartQuote {
@@ -165,32 +216,40 @@ export async function ensureCart(input: {
 
 function mergeItems(
   current: CartItem[],
-  incoming: Array<{ itemId: string; quantity: number }>,
+  incoming: Array<{
+    itemId: string;
+    quantity: number;
+    selections?: ItemSelection[];
+  }>,
   operation: "add" | "set" | "remove"
 ): CartItem[] {
   const lines = new Map<string, CartItem>();
   for (const line of current) {
-    lines.set(line.itemId, { ...line });
+    lines.set(cartLineKey(line.itemId, line.selections), { ...line });
   }
 
   for (const entry of incoming) {
-    const existing = lines.get(entry.itemId);
+    const selections = entry.selections ?? [];
+    const key = cartLineKey(entry.itemId, selections);
+    const existing = lines.get(key);
     if (operation === "remove") {
       if (!existing) continue;
       const nextQuantity = existing.quantity - entry.quantity;
-      if (nextQuantity <= 0) lines.delete(entry.itemId);
-      else lines.set(entry.itemId, { ...existing, quantity: nextQuantity });
+      if (nextQuantity <= 0) lines.delete(key);
+      else lines.set(key, { ...existing, quantity: nextQuantity });
       continue;
     }
     if (operation === "set") {
-      if (entry.quantity <= 0) lines.delete(entry.itemId);
+      if (entry.quantity <= 0) lines.delete(key);
       else {
-        lines.set(entry.itemId, {
+        lines.set(key, {
           ...(existing ?? {
             itemId: entry.itemId,
             name: entry.itemId,
             unitPriceMinor: 0,
             lineTotalMinor: 0,
+            selections,
+            options: [],
           }),
           quantity: entry.quantity,
         });
@@ -199,12 +258,14 @@ function mergeItems(
     }
     // add
     const quantity = (existing?.quantity ?? 0) + entry.quantity;
-    lines.set(entry.itemId, {
+    lines.set(key, {
       ...(existing ?? {
         itemId: entry.itemId,
         name: entry.itemId,
         unitPriceMinor: 0,
         lineTotalMinor: 0,
+        selections,
+        options: [],
       }),
       quantity,
     });
@@ -221,7 +282,11 @@ export async function updateCart(input: {
   tenantId: string;
   cartId: string;
   operation: "add" | "remove" | "set" | "clear";
-  items?: Array<{ itemId: string; quantity: number }>;
+  items?: Array<{
+    itemId: string;
+    quantity: number;
+    selections?: ItemSelection[];
+  }>;
   fulfilmentType?: "delivery" | "pickup";
   address?: string;
   customerName?: string;
@@ -246,6 +311,7 @@ export async function updateCart(input: {
     const normalized = input.items.map((entry) => ({
       itemId: String(entry.itemId ?? ""),
       quantity: Math.trunc(Number(entry.quantity ?? 0)),
+      selections: normalizeSelections(entry.selections),
     }));
     for (const entry of normalized) {
       if (!entry.itemId) {
@@ -280,13 +346,30 @@ export async function updateCart(input: {
         itemName: data.name,
       });
     }
-    const unitPriceMinor = Number(data.basePriceMinor ?? 0);
+    const basePriceMinor = Number(data.basePriceMinor ?? 0);
+    const validation = validateSelections(
+      optionGroupsOf(data),
+      line.selections ?? []
+    );
+    if (!validation.ok) {
+      throw new CartError("INVALID_OPTIONS", validation.error ?? "Invalid options", {
+        itemId: line.itemId,
+        itemName: data.name,
+      });
+    }
+    const unitPriceMinor = basePriceMinor + validation.priceDeltaMinor;
     priced.push({
       itemId: line.itemId,
       name: String(data.name ?? line.itemId),
       quantity: line.quantity,
       unitPriceMinor,
-      lineTotalMinor: unitPriceMinor * line.quantity,
+      lineTotalMinor: lineTotalMinor(
+        basePriceMinor,
+        validation.priceDeltaMinor,
+        line.quantity
+      ),
+      selections: line.selections ?? [],
+      options: validation.resolved,
     });
   }
 
@@ -354,6 +437,7 @@ export async function quoteCart(input: {
     items: cart.items.map((line) => ({
       itemId: line.itemId,
       quantity: line.quantity,
+      selections: line.selections ?? [],
     })),
     fulfilmentType,
     address: fulfilmentType === "delivery" ? (cart.fulfilment?.address ?? undefined) : undefined,
@@ -488,6 +572,7 @@ export async function submitCart(input: {
       items: cart.items.map((line) => ({
         itemId: line.itemId,
         quantity: line.quantity,
+        selections: line.selections ?? [],
       })),
       customerName,
       customerPhone,
