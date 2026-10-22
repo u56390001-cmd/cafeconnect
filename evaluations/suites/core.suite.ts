@@ -262,7 +262,7 @@ export const coreScenarios: EvalScenario[] = [
   {
     id: "pricing-006-free-delivery-not-applied-to-pickup",
     category: "pricing",
-    description: "Pickup orders keep the delivery fee untouched",
+    description: "Pickup orders are never charged a delivery fee",
     weight: "hard",
     kind: "pure",
     run: () => {
@@ -273,8 +273,8 @@ export const coreScenarios: EvalScenario[] = [
         "pickup"
       );
       return ok([
-        check("fee kept", result.deliveryFeeMinor === 10000),
-        check("total", result.totalMinor === 50000, `${result.totalMinor}`),
+        check("fee not charged on pickup", result.deliveryFeeMinor === 0),
+        check("total", result.totalMinor === 40000, `${result.totalMinor}`),
       ]);
     },
   },

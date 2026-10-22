@@ -1,104 +1,140 @@
-import { createSign } from "crypto";
+import { createHmac, createHash } from "crypto";
 
 /**
- * Dependency-free Google Cloud Storage client.
+ * Dependency-free Backblaze B2 (S3-compatible) client.
  *
- * The Firebase Spark (free) plan covers the storage we need (5 GB included),
- * so this project deliberately avoids the @google-cloud/storage SDK. Instead
- * the service account is exchanged for a short-lived OAuth token (signed JWT
- * with node:crypto) and the plain GCS JSON API is used.
+ * Firebase Storage buckets now require a billing-enabled project, so product
+ * images live in a free Backblaze B2 bucket instead. The bucket is private;
+ * the only access is through this signed S3 REST client and the app's own
+ * media routes, so the browser never sees the credentials.
  *
- * Only the server may call this - the browser never sees the credentials.
+ * AWS SigV4 signing is implemented with node:crypto - no SDK dependency.
+ * Only the server may call this (never ship these env keys to the client).
  */
 
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const STORAGE_API = "https://storage.googleapis.com";
-const SCOPE = "https://www.googleapis.com/auth/devstorage.read_write";
+/* body-hash: uploads are sent unsigned (B2 accepts UNSIGNED-PAYLOAD) */
+const UNSIGNED_SHA = "UNSIGNED-PAYLOAD";
 
-interface CachedToken {
-  token: string;
-  expiresAt: number;
+interface S3Setup {
+  host: string;
+  bucket: string;
+  keyId: string;
+  appKey: string;
+  region: string;
 }
 
-let cachedToken: CachedToken | null = null;
-
-function base64Url(input: Buffer | string): string {
-  return Buffer.from(input)
-    .toString("base64")
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
-function serviceAccount(): { clientEmail: string; privateKey: string } {
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const rawKey = process.env.FIREBASE_PRIVATE_KEY;
-  if (!clientEmail || !rawKey) {
-    throw new Error("Missing Firebase service account for storage access");
+function s3Config(): S3Setup {
+  const host = process.env.B2_S3_ENDPOINT;
+  const bucket = process.env.B2_BUCKET ?? process.env.FIREBASE_STORAGE_BUCKET;
+  const keyId = process.env.B2_KEY_ID;
+  const appKey = process.env.B2_APP_KEY;
+  if (!host || !bucket || !keyId || !appKey) {
+    throw new Error(
+      "Missing B2 storage configuration (B2_S3_ENDPOINT/B2_BUCKET/B2_KEY_ID/B2_APP_KEY)"
+    );
   }
-  return {
-    clientEmail,
-    privateKey: rawKey.replace(/\\n/g, "\n").replace(/^"|"$/g, ""),
-  };
+  // Endpoint looks like s3.us-east-005.backblazeb2.com; the region is embedded.
+  const region = host.replace(/^s3\./, "").replace(/\.backblazeb2\.com$/, "");
+  return { host, bucket, keyId, appKey, region };
 }
 
-export function storageBucketName(): string {
-  const bucket =
-    process.env.FIREBASE_STORAGE_BUCKET ||
-    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
-  if (!bucket) {
-    throw new Error("Missing storage bucket configuration");
-  }
-  return bucket;
+function amzDate(date: Date): { amz: string; short: string } {
+  const stamp = date
+    .toISOString()
+    .replace(/[:-]/g, "")
+    .replace(/\.\d{3}/, "");
+  return { amz: stamp, short: stamp.slice(0, 8) };
 }
 
-/** Exchanges the service account for an access token (cached ~50 minutes). */
-async function accessToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
-    return cachedToken.token;
-  }
+function hmac(key: Buffer | string, data: string): Buffer {
+  return createHmac("sha256", key).update(data).digest();
+}
 
-  const { clientEmail, privateKey } = serviceAccount();
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const claims = base64Url(
-    JSON.stringify({
-      iss: clientEmail,
-      scope: SCOPE,
-      aud: TOKEN_URL,
-      iat: issuedAt,
-      exp: issuedAt + 3600,
-    })
+function encodedSegment(segment: string): string {
+  return encodeURIComponent(segment).replace(
+    /[!$&'()*+,;=:@]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`
   );
+}
 
-  const signer = createSign("RSA-SHA256");
-  signer.update(`${header}.${claims}`);
-  const signature = signer.sign(privateKey, "base64");
-  const assertion = `${header}.${claims}.${base64Url(signature)}`;
+/** AWS style: percent-encoded, unreserved characters kept, sorted by key. */
+function encodedQueryString(query: string): string {
+  if (!query) return "";
+  const [rawSearch] = query.startsWith("?") ? [query.slice(1)] : [query];
+  const pairs = rawSearch
+    .split("&")
+    .filter(Boolean)
+    .map((pair) => {
+      const [name, value = ""] = pair.split("=");
+      return { name: name.replace(/\+/g, " "), value: value.replace(/\+/g, " ") };
+    })
+    .sort((a, b) => (a.name === b.name ? (a.value < b.value ? -1 : 1) : a.name < b.name ? -1 : 1))
+    .map((pair) => `${encodedSegment(pair.name)}=${encodedSegment(pair.value)}`);
+  return pairs.length ? `?${pairs.join("&")}` : "";
+}
 
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion,
-    }).toString(),
-  });
+async function s3Request(options: {
+  method: string;
+  /** Object key path relative to the bucket ("/" for bucket-level ops). */
+  path: string;
+  /** Query string starting with "?" or empty. */
+  query?: string;
+  contentType?: string;
+  body?: Buffer;
+}): Promise<Response> {
+  const { host, bucket, keyId, appKey, region } = s3Config();
+  const now = amzDate(new Date());
+  const keyPath = options.path === "" ? "" : options.path.split("/").map(encodedSegment).join("/");
+  const canonicalUri = `/${bucket}${keyPath ? `/${keyPath}` : "/"}`;
+  const canonicalQuery = encodedQueryString(options.query ?? "").replace(/^\?/, "");
 
-  if (!res.ok) {
-    throw new Error(`Could not authorize storage access (${res.status})`);
-  }
-
-  const data = (await res.json()) as { access_token?: string; expires_in?: number };
-  if (!data.access_token) {
-    throw new Error("Storage authorization did not return a token");
-  }
-
-  cachedToken = {
-    token: data.access_token,
-    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+  const headers: Record<string, string> = {
+    host,
+    "x-amz-content-sha256": UNSIGNED_SHA,
+    "x-amz-date": now.amz,
   };
-  return cachedToken.token;
+  if (options.contentType) {
+    headers["content-type"] = options.contentType;
+  }
+
+  const signedHeaderNames = Object.keys(headers).sort();
+  const canonicalHeaders = signedHeaderNames
+    .map((name) => `${name}:${headers[name]}`)
+    .join("\n");
+
+  const canonicalRequest = [
+    options.method,
+    canonicalUri,
+    canonicalQuery,
+    `${canonicalHeaders}\n`,
+    signedHeaderNames.join(";"),
+    UNSIGNED_SHA,
+  ].join("\n");
+
+  const scope = `${now.short}/${region}/s3/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    now.amz,
+    scope,
+    createHash("sha256").update(canonicalRequest).digest("hex"),
+  ].join("\n");
+
+  const signingKey = hmac(
+    hmac(hmac(hmac(`AWS4${appKey}`, now.short), region), "s3"),
+    "aws4_request"
+  );
+  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+
+  return fetch(`https://${host}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ""}`, {
+    method: options.method,
+    headers: {
+      ...headers,
+      Authorization: `AWS4-HMAC-SHA256 Credential=${keyId}/${scope}, SignedHeaders=${signedHeaderNames.join(
+        ";"
+      )}, Signature=${signature}`,
+    },
+    body: options.body ? new Uint8Array(options.body) : undefined,
+  });
 }
 
 export interface StoredObject {
@@ -113,49 +149,19 @@ export async function uploadObject(
   body: Buffer,
   contentType: string
 ): Promise<StoredObject> {
-  const token = await accessToken();
-  const url = `${STORAGE_API}/upload/storage/v1/b/${encodeURIComponent(
-    storageBucketName()
-  )}/o?uploadType=media&name=${encodeURIComponent(path)}`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": contentType,
-    },
-    body: new Uint8Array(body),
-  });
-
+  const res = await s3Request({ method: "PUT", path, contentType, body });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(`Storage upload failed (${res.status}): ${detail.slice(0, 200)}`);
   }
-
-  const data = (await res.json()) as {
-    name?: string;
-    size?: string;
-    contentType?: string;
-  };
-  return {
-    name: data.name ?? path,
-    size: Number(data.size ?? body.length),
-    contentType: data.contentType ?? contentType,
-  };
+  return { name: path, size: body.length, contentType };
 }
 
 /** Downloads an object, or returns null when it does not exist. */
 export async function downloadObject(
   path: string
 ): Promise<{ body: Buffer; contentType: string } | null> {
-  const token = await accessToken();
-  const url = `${STORAGE_API}/download/storage/v1/b/${encodeURIComponent(
-    storageBucketName()
-  )}/o/${encodeURIComponent(path)}?alt=media`;
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await s3Request({ method: "GET", path });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Storage download failed (${res.status})`);
@@ -169,29 +175,27 @@ export async function downloadObject(
 
 /** Deletes an object. Missing files are ignored. */
 export async function deleteObject(path: string): Promise<void> {
-  const token = await accessToken();
-  const url = `${STORAGE_API}/storage/v1/b/${encodeURIComponent(
-    storageBucketName()
-  )}/o/${encodeURIComponent(path)}`;
-  const res = await fetch(url, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await s3Request({ method: "DELETE", path });
   if (!res.ok && res.status !== 404) {
     throw new Error(`Storage delete failed (${res.status})`);
   }
 }
 
-/** Lists object names under a prefix (used for cleanup). */
+/** Lists object names under a prefix (S3 ListObjectsV2, XML response). */
 export async function listObjects(prefix: string): Promise<string[]> {
-  const token = await accessToken();
-  const url = `${STORAGE_API}/storage/v1/b/${encodeURIComponent(
-    storageBucketName()
-  )}/o?prefix=${encodeURIComponent(prefix)}`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await s3Request({
+    method: "GET",
+    path: "",
+    // encodedQueryString canonicalizes and encodes the raw prefix value.
+    query: `?list-type=2&prefix=${prefix}`,
+  });
   if (!res.ok) return [];
-  const data = (await res.json()) as { items?: Array<{ name?: string }> };
-  return (data.items ?? [])
-    .map((item) => item.name)
-    .filter((name): name is string => Boolean(name));
+  const text = await res.text();
+  const names: string[] = [];
+  const keyPattern = /<Key>([^<]*)<\/Key>/g;
+  let match: RegExpExecArray | null;
+  while ((match = keyPattern.exec(text)) !== null) {
+    names.push(match[1]);
+  }
+  return names;
 }
