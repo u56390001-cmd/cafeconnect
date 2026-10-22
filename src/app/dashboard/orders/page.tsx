@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty } from "@/components/ui/empty";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
-import { formatMoney } from "@/lib/domain/money";
+import { printBill } from "@/lib/print/receipt";
 
 interface OrderItem {
   itemId: string;
@@ -89,35 +89,29 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 function printTicket(order: Order) {
-  const lines = [
-    `Order ${order.orderNumber}`,
-    `Placed: ${new Date(order.createdAt).toLocaleString()}`,
-    `Type: ${order.fulfilment?.type === "pickup" ? "Pickup" : "Delivery"}`,
-    order.fulfilment?.address
-      ? `Address: ${order.fulfilment.address}`
-      : "",
-    `Customer: ${order.customer?.name ?? ""} · ${order.customer?.phone ?? ""}`,
-    "",
-    ...order.items.map(
-      (item) => `${item.quantity} x ${item.name} — ${formatMoney(item.unitPriceMinor * item.quantity, order.currency)}`
-    ),
-    "",
-    `Total: ${formatMoney(order.totalMinor, order.currency)}`,
-    order.appliedOffer ? `Offer: ${order.appliedOffer}` : "",
-    `Payment: ${order.paymentStatus}`,
-    order.notes ? `Notes: ${order.notes}` : "",
-  ].filter(Boolean);
-
-  const popup = window.open("", "_blank", "width=380,height=640");
-  if (!popup) return;
-  popup.document.write(
-    `<pre style="font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; white-space: pre-wrap;">${lines.join(
-      "\n"
-    )}</pre>`
-  );
-  popup.document.close();
-  popup.focus();
-  setTimeout(() => popup.print(), 200);
+  printBill({
+    orderNumber: order.orderNumber,
+    createdAt: order.createdAt,
+    fulfilmentType: order.fulfilment?.type === "pickup" ? "pickup" : "delivery",
+    address: order.fulfilment?.address ?? null,
+    customerName: order.customer?.name,
+    customerPhone: order.customer?.phone,
+    notes: order.notes,
+    items: order.items.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      unitPriceMinor: item.unitPriceMinor,
+      lineTotalMinor: item.unitPriceMinor * item.quantity,
+      options: item.options ?? [],
+    })),
+    subtotalMinor: order.totalMinor - order.discountMinor - order.deliveryFeeMinor,
+    discountMinor: order.discountMinor,
+    deliveryFeeMinor: order.deliveryFeeMinor,
+    totalMinor: order.totalMinor,
+    currency: order.currency,
+    appliedOffer: order.appliedOffer ?? null,
+    paymentStatus: order.paymentStatus,
+  });
 }
 
 function OrdersPage() {
