@@ -717,7 +717,7 @@ export default function PosPage() {
         </Alert>
       )}
 
-      <div className="grid min-h-[calc(100vh-14rem)] grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
+      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100vh-10.5rem)] lg:grid-cols-[1fr_360px] lg:overflow-hidden">
         <ProductGrid
           items={items}
           categories={categories}
@@ -731,7 +731,7 @@ export default function PosPage() {
           onPick={onPick}
         />
 
-        <section className="rounded-lg border bg-muted/40 p-3 lg:h-full">
+        <section className="rounded-lg border bg-muted/40 p-3 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden">
           <OrderPanel
             fulfilments={fulfilments}
             fulfilmentType={fulfilmentType}
