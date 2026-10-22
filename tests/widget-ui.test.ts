@@ -5,7 +5,7 @@ import {
   sanitizeHexColor,
   DEFAULT_BRANDING,
 } from "@/lib/widget/service";
-import { parseWidgetBlocks } from "@/lib/widget/ui-contract";
+import { parseWidgetBlocks, looksLikeBrowseRequest } from "@/lib/widget/ui-contract";
 
 describe("widget branding", () => {
   it("keeps valid hex colours and rejects everything else", () => {
@@ -50,6 +50,21 @@ describe("widget branding", () => {
     const ratio = contrastRatio("#ea580c", "#ffffff");
     expect(ratio).toBeGreaterThan(2.5);
     expect(ratio).toBeLessThan(4.5);
+  });
+});
+
+describe("browse intent", () => {
+  it("recognises requests to see products", () => {
+    expect(looksLikeBrowseRequest("Menu dikhao")).toBe(true);
+    expect(looksLikeBrowseRequest("kya kya hai aapka menu")).toBe(true);
+    expect(looksLikeBrowseRequest("burgers mein kya hai?")).toBe(true);
+    expect(looksLikeBrowseRequest("drinks show karo")).toBe(true);
+  });
+
+  it("does not treat a plain question as a browse request", () => {
+    expect(looksLikeBrowseRequest("Delivery charges kitne hain?")).toBe(false);
+    expect(looksLikeBrowseRequest("")).toBe(false);
+    expect(looksLikeBrowseRequest("a".repeat(200))).toBe(false);
   });
 });
 

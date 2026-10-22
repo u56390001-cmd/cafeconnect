@@ -10,7 +10,9 @@ import { cartIdForConversation, getCart } from "@/lib/services/carts";
 import { detectLanguage, stringsFor, type LanguageMode } from "./language";
 import {
   enrichProducts,
+  looksLikeBrowseRequest,
   parseWidgetBlocks,
+  resolveBrowseProducts,
   type WidgetBlock,
   type WidgetCartSummary,
   type WidgetOrderSummary,
@@ -693,6 +695,7 @@ export async function respondToCustomer(options: {
       cart: toolState.cart,
       order: toolState.orderSnapshot,
       handoff: toolState.handoff,
+      message,
     }),
   };
 }
@@ -711,6 +714,7 @@ async function buildWidgetBlocks(input: {
   cart: Record<string, unknown> | null;
   order: Record<string, unknown> | null;
   handoff: string | null;
+  message: string;
 }): Promise<WidgetBlock[]> {
   // Rich presentation is a web-widget feature; WhatsApp uses text.
   if (input.channel !== "web") return [];
@@ -722,6 +726,20 @@ async function buildWidgetBlocks(input: {
       const products = await enrichProducts(
         input.tenantId,
         input.productIds,
+        { currency: input.currency, showImages: true }
+      );
+      if (products.length > 0) {
+        blocks.push({
+          type: products.length > 4 ? "product_list" : "product_carousel",
+          products,
+        });
+      }
+    } else if (looksLikeBrowseRequest(input.message)) {
+      // The model did not ask for cards, but the customer clearly wants to
+      // see products: resolve the matching live items server side.
+      const products = await resolveBrowseProducts(
+        input.tenantId,
+        input.message,
         { currency: input.currency, showImages: true }
       );
       if (products.length > 0) {

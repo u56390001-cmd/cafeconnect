@@ -1,4 +1,4 @@
-import { tenantDoc } from "@/lib/tenancy/resolver";
+import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { optionGroupsOf } from "@/lib/domain/options";
 
 /**
@@ -174,6 +174,149 @@ export async function enrichProducts(
   }
 
   return products;
+}
+
+/**
+ * Verified browse intent.
+ *
+ * The model can ask for product cards explicitly (show_products). As a
+ * reliable fallback the server also recognises plain "show me the menu"
+ * requests and resolves the matching live products itself, so the customer
+ * always sees real cards instead of a wall of text.
+ */
+const BROWSE_WORDS = [
+  "menu",
+  "dikhao",
+  "dikha",
+  "dikhaye",
+  "batao",
+  "bata",
+  "list",
+  "show",
+  "kya",
+  "kya kya",
+  "available",
+  "options",
+  "items",
+  "products",
+  "dishes",
+];
+
+const CATEGORY_WORDS = [
+  "burger",
+  "burgers",
+  "pizza",
+  "biryani",
+  "shawarma",
+  "drink",
+  "drinks",
+  "dessert",
+  "desserts",
+  "sandwich",
+  "sandwiches",
+  "roll",
+  "rolls",
+  "chaat",
+  "karahi",
+  "kebab",
+  "fries",
+  "coffee",
+  "tea",
+  "chawal",
+  "thai",
+  "deals",
+  "offers",
+];
+
+export function looksLikeBrowseRequest(message: string): boolean {
+  const text = message.trim().toLowerCase();
+  if (text.length === 0) return false;
+  if (text.length > 160) return false;
+  const hasBrowseWord = BROWSE_WORDS.some((word) =>
+    text.includes(word)
+  );
+  const hasCategory = CATEGORY_WORDS.some((word) => text.includes(word));
+  return hasCategory || hasBrowseWord;
+}
+
+/**
+ * Resolves the products a browse request is about, using only live tenant
+ * data (published, available, inside the tenant).
+ */
+export async function resolveBrowseProducts(
+  tenantId: string,
+  message: string,
+  options: { currency: string; showImages: boolean; limit?: number }
+): Promise<WidgetProduct[]> {
+  const limit = Math.min(options.limit ?? 6, 8);
+  const text = message.trim().toLowerCase();
+
+  const itemsSnap = await tenantCollection(tenantId, "menuItems")
+    .where("publicationStatus", "==", "published")
+    .get();
+
+  if (itemsSnap.empty) return [];
+
+  const categoriesSnap = await tenantCollection(tenantId, "menuCategories").get();
+  const categoryNames = new Map<string, string>();
+  for (const doc of categoriesSnap.docs) {
+    const d = doc.data();
+    categoryNames.set(String(d.categoryId ?? doc.id), String(d.name ?? ""));
+  }
+
+  const rows = itemsSnap.docs.map((doc) => {
+    const d = doc.data();
+    const name = String(d.name ?? "");
+    const categoryId = String(d.categoryId ?? "");
+    const categoryName = categoryNames.get(categoryId) ?? "";
+    const haystack = [
+      name,
+      String(d.description ?? ""),
+      categoryName,
+      ...(Array.isArray(d.aliases) ? (d.aliases as string[]) : []),
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ")
+      .toLowerCase();
+    return { doc, d, name, categoryName, haystack };
+  });
+
+  const wantsWholeMenu =
+    text.includes("menu") || text.includes("kya kya") || text.includes("list");
+
+  let selected = rows;
+
+  if (!wantsWholeMenu) {
+    const mentioned = rows.filter(
+      (row) =>
+        (row.categoryName &&
+          text.includes(row.categoryName.toLowerCase())) ||
+        (row.name.length > 3 && text.includes(row.name.toLowerCase()))
+    );
+    if (mentioned.length > 0) selected = mentioned;
+  }
+
+  if (wantsWholeMenu || selected.length === 0) {
+    // Whole menu: show the first published items in menu order.
+    selected = rows
+      .slice()
+      .sort((a, b) => {
+        const aOrder = Number(a.d.sortOrder ?? 0);
+        const bOrder = Number(b.d.sortOrder ?? 0);
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return a.name.localeCompare(b.name);
+      });
+  }
+
+  const products = await enrichProducts(
+    tenantId,
+    selected.slice(0, limit).map((row) => String(row.d.itemId ?? row.doc.id)),
+    options
+  );
+
+  return products.filter(
+    (product) => product.availability === "available" || product.priceMinor > 0
+  );
 }
 
 /**
