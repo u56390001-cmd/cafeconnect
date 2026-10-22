@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,9 @@ const CATEGORY_COLORS = [
   "bg-sky-100 text-sky-800",
   "bg-violet-100 text-violet-800",
 ];
+
+/** Ten cards per page reads as one screen; the rest sit behind page numbers. */
+const PAGE_SIZE = 10;
 
 interface ProductGridProps {
   items: PosMenuItem[];
@@ -89,6 +92,20 @@ export function ProductGrid({
         return a.name.localeCompare(b.name);
       });
   }, [items, categories, selectedCategoryId, query]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const [page, setPage] = useState(1);
+  const safePage = Math.min(page, pageCount);
+  const visible = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // A new search or category always starts at the first page.
+  useEffect(() => {
+    setPage(1);
+  }, [query, selectedCategoryId, items.length]);
+
+  useEffect(() => {
+    if (page !== safePage) setPage(safePage);
+  }, [page, safePage]);
 
   const categoryLabel = (categoryId: string): string =>
     categories.find((c) => c.categoryId === categoryId)?.name ?? "Menu";
@@ -179,7 +196,7 @@ export function ProductGrid({
           )}
 
           {!loading &&
-            filtered.map((item) => {
+            visible.map((item) => {
               const soldOut = item.availability === "soldOut";
               const needsConfiguration = activeOptionGroups(item).length > 0;
               return (
@@ -233,6 +250,54 @@ export function ProductGrid({
               );
             })}
           </div>
+          {pageCount > 1 && (
+            <nav
+              aria-label="Product pages"
+              className="mt-1 flex flex-wrap items-center justify-center gap-1 pb-2"
+            >
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                disabled={safePage <= 1}
+                onClick={() => setPage(safePage - 1)}
+                aria-label="Previous page"
+              >
+                ‹
+              </Button>
+              {Array.from({ length: pageCount }, (_, index) => index + 1).map(
+                (number) => (
+                  <button
+                    key={number}
+                    type="button"
+                    aria-current={safePage === number ? "page" : undefined}
+                    onClick={() => setPage(number)}
+                    className={cn(
+                      "h-7 min-w-7 rounded-md border px-1.5 text-xs tabular-nums transition-colors",
+                      safePage === number
+                        ? "border-transparent bg-orange-600 text-white"
+                        : "bg-white text-foreground hover:bg-muted"
+                    )}
+                  >
+                    {number}
+                  </button>
+                )
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                disabled={safePage >= pageCount}
+                onClick={() => setPage(safePage + 1)}
+                aria-label="Next page"
+              >
+                ›
+              </Button>
+              <span className="ml-2 text-[11px] text-muted-foreground tabular-nums">
+                {filtered.length} products · page {safePage}/{pageCount}
+              </span>
+            </nav>
+          )}
         </div>
     </section>
   );

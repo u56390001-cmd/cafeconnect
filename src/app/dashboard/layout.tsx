@@ -76,7 +76,7 @@ export default function DashboardLayout({
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-background">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <span className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Store className="size-5" aria-hidden="true" />
@@ -106,8 +106,10 @@ export default function DashboardLayout({
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 md:flex-row lg:px-8">
-        <aside className="w-full shrink-0 md:w-56">
+      <div className="flex min-h-[calc(100vh-4rem)] flex-col gap-6 px-4 py-6 sm:px-6 lg:flex-row lg:items-start lg:px-8">
+        <aside
+          className="w-full shrink-0 self-start md:w-56 lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto"
+        >
           <nav aria-label="Dashboard" className="flex flex-col gap-1">
             {navItems.map((item) => {
               const Icon = item.icon;
