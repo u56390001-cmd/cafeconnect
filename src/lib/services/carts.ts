@@ -652,7 +652,17 @@ export async function expireStaleCarts(tenantId: string): Promise<number> {
 export function describeCart(cart: CartDocument): string {
   if (!cart.items || cart.items.length === 0) return "Cart is empty.";
   const lines = cart.items.map(
-    (line) => `${line.quantity}x ${line.name} (${line.unitPriceMinor / 100})`
+    (line) =>
+      `${line.quantity}x ${line.name}${
+        line.options?.length
+          ? ` [${line.options
+              .map(
+                (option) =>
+                  `${option.groupName}: ${option.optionNames.join(", ")}`
+              )
+              .join("; ")}]`
+          : ""
+      } (${line.unitPriceMinor / 100})`
   );
   return `Cart (revision ${cart.cartRevision}): ${lines.join(", ")}`;
 }
