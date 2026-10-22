@@ -122,8 +122,28 @@ const updateCartDeclaration: ToolDeclaration = {
   },
 };
 
-const quoteOrderDeclaration: ToolDeclaration = {
-  name: "quote_order",
+const showProductsDeclaration: ToolDeclaration = {
+  name: "show_products",
+  description:
+    "Shows the customer real product cards for a category, a search word or a budget. Use it whenever the customer asks to SEE products (menu dikhao, drinks dikhao, kya hai, dikhao, under 1000, 2 logon ke liye, bestsellers) or when a short visual list of verified items is clearly better than a paragraph. The cards are rendered from live tenant data, so only call it with products that actually exist.",
+  parameters: {
+    type: "OBJECT",
+    properties: {
+      query: {
+        type: "STRING",
+        description:
+          "What the customer asked for: a word, a dish, a drink, or an empty string to list the whole menu.",
+      },
+      categoryId: {
+        type: "STRING",
+        description: "Optional category id, exactly as it appears in the menu.",
+      },
+      maxResults: { type: "INTEGER" },
+    },
+  },
+};
+
+const quoteOrderDeclaration: ToolDeclaration = {  name: "quote_order",
   description:
     "Prices the customer's current cart and returns the authoritative total (server-side prices, real offers, delivery fee, minimum order and delivery-area check) WITHOUT placing the order. Call it after update_cart, then show the customer the total and ask them to confirm.",
   parameters: {
@@ -258,6 +278,7 @@ const createBookingDeclaration: ToolDeclaration = {
 
 export const toolDeclarations: ToolDeclaration[] = [
   searchMenuDeclaration,
+  showProductsDeclaration,
   updateCartDeclaration,
   quoteOrderDeclaration,
   createOrderDeclaration,
@@ -269,7 +290,7 @@ export const toolDeclarations: ToolDeclaration[] = [
 ];
 
 /** Version of the shared tool contract. */
-export const TOOL_REGISTRY_VERSION = "2026-10-21.tools-v1";
+export const TOOL_REGISTRY_VERSION = "2026-10-22.tools-v2";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -445,6 +466,77 @@ async function runSearchMenu(
   });
 
   return { ok: true, data: { results, count: results.length } };
+}
+
+/**
+ * Shows verified products as cards. The model asks for a category or a word;
+ * the server returns the matching live items with their real prices, photos
+ * and availability. Nothing is invented here.
+ */
+async function runShowProducts(
+  args: Record<string, unknown>,
+  context: ToolContext
+): Promise<ToolOutcome> {
+  const query = String(args.query ?? "").trim().toLowerCase();
+  const categoryId = String(args.categoryId ?? "").trim();
+  const maxResults = Math.min(Number(args.maxResults ?? 6) || 6, 12);
+
+  const itemsSnap = await tenantCollection(context.tenantId, "menuItems")
+    .where("publicationStatus", "==", "published")
+    .get();
+
+  const terms = query.split(/\s+/).filter(Boolean);
+  const matches = itemsSnap.docs
+    .map((doc) => {
+      const d = doc.data();
+      const haystack = [
+        d.name,
+        d.description,
+        d.categoryId,
+        ...(Array.isArray(d.aliases) ? (d.aliases as string[]) : []),
+      ]
+        .filter((value): value is string => typeof value === "string")
+        .join(" ")
+        .toLowerCase();
+      const score = terms.reduce(
+        (sum, term) => (haystack.includes(term) ? sum + 1 : sum),
+        0
+      );
+      return { doc, score };
+    })
+    .filter((entry) => {
+      if (categoryId && String(entry.doc.data().categoryId ?? "") !== categoryId) {
+        return false;
+      }
+      if (!terms.length) return true;
+      return entry.score > 0;
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxResults);
+
+  const results = matches.map(({ doc }) => {
+    const d = doc.data();
+    const minor = Number(d.basePriceMinor ?? 0);
+    return {
+      itemId: d.itemId || doc.id,
+      name: d.name,
+      description: d.description || "",
+      priceLabel: `${context.currency} ${(minor / 100).toFixed(0)}`,
+      availability: d.availability ?? "available",
+    };
+  });
+
+  return {
+    ok: true,
+    data: {
+      results,
+      count: results.length,
+      note:
+        results.length > 0
+          ? "These products are now shown as cards. Mention one or two of them in your reply and let the customer choose."
+          : "No matching products. Tell the customer plainly and offer the closest verified alternative.",
+    },
+  };
 }
 
 /** Adds, removes or changes items in the customer's active cart. */
@@ -961,6 +1053,8 @@ export async function runTool(
   switch (name) {
     case "search_menu":
       return runSearchMenu(args, context);
+    case "show_products":
+      return runShowProducts(args, context);
     case "update_cart":
       return runUpdateCart(args, context);
     case "quote_order":

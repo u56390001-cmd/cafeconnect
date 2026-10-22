@@ -450,6 +450,16 @@ export async function respondToCustomer(options: {
       if (ids.length) toolState.productIds.push(...ids);
       return;
     }
+    if (name === "show_products" && outcome.ok) {
+      const list = Array.isArray(outcome.data?.results)
+        ? (outcome.data?.results as Array<{ itemId?: unknown }>)
+        : [];
+      const ids = list
+        .map((item) => String(item.itemId ?? ""))
+        .filter(Boolean);
+      if (ids.length) toolState.productIds.push(...ids);
+      return;
+    }
     if (name === "update_cart" && outcome.ok) {
       if (outcome.data?.cart) {
         toolState.cart = outcome.data.cart as Record<string, unknown>;

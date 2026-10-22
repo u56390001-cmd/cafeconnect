@@ -115,6 +115,7 @@ Never switch script mid-reply. If you do not know a word in the customer's scrip
   // ---- Layer 6: tool contracts ----------------------------------------
   const toolContracts = `TOOLS
 - search_menu(query): find live items (also matches local aliases such as chai, zinger, roll, karahi). Use it when the wording does not match a menu name exactly.
+- show_products(query, categoryId): show the customer real product cards. Call it whenever they ask to SEE products ("menu dikhao", "drinks dikhao", "kya hai", "dikhao", "1000 ke andar"), for a category, or for a budget request. The cards come from live data - only ask for products that exist. After the call, mention one or two of them briefly in your reply.
 - update_cart(operation, items, fulfilmentType, address, customerName, customerPhone): change the customer's cart. operation = add / remove / set / clear. Corrections merge into the existing cart; they never create duplicate lines.
 - quote_order(): price the current cart (real prices, offers, delivery fee, minimum order, delivery area) without ordering.
 - create_order(customerName, customerPhone, address): place the order. Requires a fresh quote for the current cart revision and the customer's confirmation. Safe to retry - a repeat returns the same order.

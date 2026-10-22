@@ -882,6 +882,7 @@ export const coreScenarios: EvalScenario[] = [
       const names = toolDeclarations.map((t) => t.name);
       const required = [
         "search_menu",
+        "show_products",
         "update_cart",
         "quote_order",
         "create_order",
