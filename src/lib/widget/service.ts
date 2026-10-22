@@ -1,14 +1,52 @@
 import { getAdminDb } from "@/lib/firebase/admin";
 import { randomUUID } from "crypto";
+import {
+  DEFAULT_BRANDING,
+  sanitizeBranding,
+  type WidgetBranding,
+  type WidgetDensity,
+  type WidgetFontPreset,
+  type WidgetLauncherPosition,
+  type WidgetRadius,
+  type WidgetThemeMode,
+} from "./theme";
 
-export interface WidgetConfig {
+/**
+ * Widget configuration (public widget identity + branding).
+ *
+ * Only the public widget id is ever exposed to a browser. Everything stored
+ * here is a *display* setting: colours, radius, launcher placement, prompts.
+ * No credential, no tenant secret.
+ *
+ * The pure theming helpers live in `@/lib/widget/theme` so that client
+ * components never pull the Firebase Admin SDK into the browser bundle.
+ */
+
+export {
+  DEFAULT_BRANDING,
+  sanitizeBranding,
+  sanitizeHexColor,
+  contrastRatio,
+} from "./theme";
+export type {
+  WidgetBranding,
+  WidgetDensity,
+  WidgetFontPreset,
+  WidgetLauncherPosition,
+  WidgetRadius,
+  WidgetThemeMode,
+} from "./theme";
+
+export interface WidgetConfig extends WidgetBranding {
   publicWidgetId: string;
   tenantId: string;
   enabled: boolean;
-  greeting: string;
-  primaryColor: string;
   allowStore: boolean;
   createdAt: Date;
+}
+
+function brandingFromData(data: Record<string, unknown>): WidgetBranding {
+  return sanitizeBranding(data as Record<string, unknown>, DEFAULT_BRANDING);
 }
 
 export async function ensureWidgetConfig(
@@ -27,10 +65,9 @@ export async function ensureWidgetConfig(
       publicWidgetId: data.publicWidgetId,
       tenantId,
       enabled: data.enabled !== false,
-      greeting: data.greeting ?? "",
-      primaryColor: data.primaryColor ?? "#ea580c",
       allowStore: data.allowStore !== false,
       createdAt: (data.createdAt as Date) ?? new Date(),
+      ...brandingFromData(data),
     };
   }
 
@@ -39,9 +76,8 @@ export async function ensureWidgetConfig(
     publicWidgetId,
     tenantId,
     enabled: true,
-    greeting: "",
-    primaryColor: "#ea580c",
     allowStore: true,
+    ...DEFAULT_BRANDING,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -50,11 +86,27 @@ export async function ensureWidgetConfig(
     publicWidgetId,
     tenantId,
     enabled: true,
-    greeting: "",
-    primaryColor: "#ea580c",
     allowStore: true,
     createdAt: new Date(),
+    ...DEFAULT_BRANDING,
   };
+}
+
+/** Updates the branding of a tenant widget (dashboard settings). */
+export async function updateWidgetBranding(
+  tenantId: string,
+  patch: Record<string, unknown>
+): Promise<WidgetConfig> {
+  const config = await ensureWidgetConfig(tenantId);
+  const current = brandingFromData(
+    config as unknown as Record<string, unknown>
+  );
+  const branding = sanitizeBranding(patch, current);
+  await getAdminDb()
+    .collection("widgetConfigs")
+    .doc(config.publicWidgetId)
+    .set({ ...branding, updatedAt: new Date() }, { merge: true });
+  return { ...config, ...branding };
 }
 
 export async function resolveWidget(
@@ -73,10 +125,9 @@ export async function resolveWidget(
     publicWidgetId,
     tenantId: data.tenantId as string,
     enabled: data.enabled !== false,
-    greeting: (data.greeting as string | undefined) ?? "",
-    primaryColor: (data.primaryColor as string | undefined) ?? "#ea580c",
     allowStore: data.allowStore !== false,
     createdAt: (data.createdAt as Date) ?? new Date(),
+    ...brandingFromData(data),
   };
 }
 

@@ -5,6 +5,13 @@ import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Public widget configuration.
+ *
+ * Returns only display settings and the business name - never a credential
+ * and never private data. The public widget id is an identifier, not an
+ * authorization token.
+ */
 export async function GET(request: NextRequest): Promise<Response> {
   try {
     const { searchParams } = new URL(request.url);
@@ -28,10 +35,30 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     return createApiResponse({
       businessName,
-      greeting: profile?.businessName
-        ? `Hi! Welcome to ${profile.businessName}. How can I help you?`
-        : "Hi! How can I help you?",
+      greeting: config.greeting
+        ? config.greeting
+        : profile?.businessName
+          ? `Hi! Welcome to ${profile.businessName}. How can I help you?`
+          : "Hi! How can I help you?",
       allowStore: config.allowStore,
+      theme: {
+        primaryColor: config.primaryColor,
+        accentColor: config.accentColor,
+        themeMode: config.themeMode,
+        radius: config.radius,
+        density: config.density,
+        fontPreset: config.fontPreset,
+        logoUrl: config.logoUrl,
+        launcherPosition: config.launcherPosition,
+        launcherLabel: config.launcherLabel,
+      },
+      features: {
+        showImages: config.showImages,
+        showProducts: config.showProducts,
+        showCart: config.showCart,
+        showStorefrontLink: config.showStorefrontLink,
+      },
+      starterPrompts: config.starterPrompts,
     });
   } catch (error: unknown) {
     return handleApiError("api/widget/resolve", error);

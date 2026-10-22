@@ -9,6 +9,13 @@ import { runTool, toolDeclarations, type ToolContext } from "./tools";
 import { cartIdForConversation, getCart } from "@/lib/services/carts";
 import { detectLanguage, stringsFor, type LanguageMode } from "./language";
 import {
+  enrichProducts,
+  parseWidgetBlocks,
+  type WidgetBlock,
+  type WidgetCartSummary,
+  type WidgetOrderSummary,
+} from "@/lib/widget/ui-contract";
+import {
   buildStateBlock,
   deriveActiveIntent,
   deriveCompactSummary,
@@ -77,6 +84,8 @@ export interface OutboundReply {
   suppressed?: boolean;
   languageMode?: LanguageMode;
   requestId?: string;
+  /** Verified UI blocks for the web widget (never model supplied data). */
+  ui?: WidgetBlock[];
 }
 
 export async function ensureConversation(
@@ -375,7 +384,23 @@ export async function respondToCustomer(options: {
     lastErrorMessage: string | null;
     recommendedItemIds: string[];
     orderId: string | null;
-  } = { order: null, lastErrorMessage: null, recommendedItemIds: [], orderId: null };
+    /** Product ids found by verified tools (rendered as cards). */
+    productIds: string[];
+    /** Verified cart snapshot for the cart panel. */
+    cart: Record<string, unknown> | null;
+    /** Verified order snapshot for the receipt card. */
+    orderSnapshot: Record<string, unknown> | null;
+    handoff: string | null;
+  } = {
+    order: null,
+    lastErrorMessage: null,
+    recommendedItemIds: [],
+    orderId: null,
+    productIds: [],
+    cart: null,
+    orderSnapshot: null,
+    handoff: null,
+  };
 
   const captureToolOutcome = (
     name: string,
@@ -397,6 +422,9 @@ export async function respondToCustomer(options: {
       toolState.orderId = outcome.data.orderId
         ? String(outcome.data.orderId)
         : null;
+      toolState.orderSnapshot = outcome.data
+        ? { ...(outcome.data as Record<string, unknown>) }
+        : null;
       return;
     }
     if (name === "recommend_items" && outcome.ok) {
@@ -408,7 +436,43 @@ export async function respondToCustomer(options: {
         .filter(Boolean);
       if (ids.length) {
         toolState.recommendedItemIds = ids;
+        toolState.productIds.push(...ids);
       }
+      return;
+    }
+    if (name === "search_menu" && outcome.ok) {
+      const list = Array.isArray(outcome.data?.results)
+        ? (outcome.data?.results as Array<{ itemId?: unknown }>)
+        : [];
+      const ids = list
+        .map((item) => String(item.itemId ?? ""))
+        .filter(Boolean);
+      if (ids.length) toolState.productIds.push(...ids);
+      return;
+    }
+    if (name === "update_cart" && outcome.ok) {
+      if (outcome.data?.cart) {
+        toolState.cart = outcome.data.cart as Record<string, unknown>;
+      }
+      return;
+    }
+    if (name === "quote_order" && outcome.ok) {
+      if (outcome.data?.cart) {
+        toolState.cart = outcome.data.cart as Record<string, unknown>;
+      }
+      return;
+    }
+    if (name === "create_order" && outcome.ok) {
+      toolState.orderSnapshot = outcome.data
+        ? { ...(outcome.data as Record<string, unknown>) }
+        : null;
+      return;
+    }
+    if (name === "handoff_to_staff" && outcome.ok) {
+      toolState.handoff =
+        typeof outcome.data?.message === "string"
+          ? outcome.data.message
+          : "A staff member will take over this chat.";
       return;
     }
     if (!outcome.ok) {
@@ -611,7 +675,122 @@ export async function respondToCustomer(options: {
     customerName: context.businessName,
     languageMode,
     requestId,
+    ui: await buildWidgetBlocks({
+      tenantId,
+      channel,
+      currency: context.currency,
+      productIds: toolState.productIds,
+      cart: toolState.cart,
+      order: toolState.orderSnapshot,
+      handoff: toolState.handoff,
+    }),
   };
+}
+
+/**
+ * Turns verified tool results into the widget response contract.
+ *
+ * Only data that came back from a server-side tool is rendered. No model
+ * supplied product, price or image ever reaches a card.
+ */
+async function buildWidgetBlocks(input: {
+  tenantId: string;
+  channel: string;
+  currency: string;
+  productIds: string[];
+  cart: Record<string, unknown> | null;
+  order: Record<string, unknown> | null;
+  handoff: string | null;
+}): Promise<WidgetBlock[]> {
+  // Rich presentation is a web-widget feature; WhatsApp uses text.
+  if (input.channel !== "web") return [];
+
+  const blocks: WidgetBlock[] = [];
+
+  try {
+    if (input.productIds.length > 0) {
+      const products = await enrichProducts(
+        input.tenantId,
+        input.productIds,
+        { currency: input.currency, showImages: true }
+      );
+      if (products.length > 0) {
+        blocks.push({
+          type: products.length > 4 ? "product_list" : "product_carousel",
+          products,
+        });
+      }
+    }
+
+    if (input.order?.orderNumber) {
+      const order = input.order as unknown as WidgetOrderSummary;
+      blocks.push({
+        type: "order_confirmation",
+        order: {
+          orderId: String(order.orderId ?? ""),
+          orderNumber: String(order.orderNumber ?? ""),
+          totalLabel: String(order.totalLabel ?? ""),
+          subtotalLabel: String(order.subtotalLabel ?? ""),
+          discountLabel: String(order.discountLabel ?? ""),
+          deliveryFeeLabel: String(order.deliveryFeeLabel ?? ""),
+          fulfilmentType: String(order.fulfilmentType ?? "delivery"),
+          address: order.address ?? null,
+          itemCount: (order.lines ?? []).reduce(
+            (sum, line) => sum + (line.quantity ?? 0),
+            0
+          ),
+          lines: order.lines ?? [],
+          trackUrl: null,
+          status: String(order.status ?? "received"),
+        },
+      });
+    } else if (input.cart) {
+      const cart = input.cart as unknown as WidgetCartSummary;
+      blocks.push({
+        type: "cart_summary",
+        cart: {
+          cartId: String(cart.cartId ?? ""),
+          revision: Number(cart.revision ?? 0),
+          itemCount: Number(cart.itemCount ?? 0),
+          subtotalMinor: Number(cart.subtotalMinor ?? 0),
+          subtotalLabel:
+            cart.subtotalLabel ??
+            `${input.currency} ${Math.round(Number(cart.subtotalMinor ?? 0) / 100)}`,
+          discountMinor: Number(cart.discountMinor ?? 0),
+          discountLabel:
+            cart.discountLabel ??
+            `${input.currency} ${Math.round(Number(cart.discountMinor ?? 0) / 100)}`,
+          deliveryFeeMinor: Number(cart.deliveryFeeMinor ?? 0),
+          deliveryFeeLabel:
+            cart.deliveryFeeLabel ??
+            `${input.currency} ${Math.round(Number(cart.deliveryFeeMinor ?? 0) / 100)}`,
+          totalMinor: Number(cart.totalMinor ?? 0),
+          totalLabel:
+            cart.totalLabel ??
+            `${input.currency} ${Math.round(Number(cart.totalMinor ?? 0) / 100)}`,
+          appliedOffer: cart.appliedOffer ?? null,
+          minimumOrderLabel: cart.minimumOrderLabel ?? null,
+          deliveryAreaStatus: String(cart.deliveryAreaStatus ?? "not_applicable"),
+          lines: cart.lines ?? [],
+          // Without a fresh quote the number is a subtotal, not a final total.
+          totalIsFinal: typeof cart.totalMinor === "number" && cart.totalMinor > 0,
+        },
+      });
+    }
+
+    if (input.handoff) {
+      blocks.push({ type: "handoff", text: input.handoff });
+    }
+  } catch (error: unknown) {
+    // Rich blocks are an enhancement - the text reply still stands.
+    console.error(
+      `[ai-error] scope=buildWidgetBlocks tenant=${input.tenantId} message=${
+        error instanceof Error ? error.message.slice(0, 120) : "unknown"
+      }`
+    );
+  }
+
+  return parseWidgetBlocks(blocks);
 }
 
 /** Ensures the conversation has an active cart and returns its id. */

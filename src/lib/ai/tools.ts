@@ -517,6 +517,26 @@ async function runUpdateCart(
         items: lines,
         summary: describeCart(cart),
         status: cart.status,
+        cart: {
+          cartId: cart.cartId,
+          revision: Number(cart.cartRevision ?? 0),
+          itemCount: cart.items.reduce((sum, line) => sum + line.quantity, 0),
+          subtotalMinor: cart.items.reduce(
+            (sum, line) => sum + (line.lineTotalMinor ?? 0),
+            0
+          ),
+          lines: cart.items.map((line) => ({
+            itemId: line.itemId,
+            name: line.name,
+            quantity: line.quantity,
+            unitPriceMinor: line.unitPriceMinor,
+            lineTotalMinor: line.lineTotalMinor,
+            options: (line.options ?? []).map((option) => ({
+              groupName: option.groupName,
+              optionNames: option.optionNames,
+            })),
+          })),
+        },
         note: "The previous quote is now invalid. Call quote_order again before confirming.",
       },
     };
@@ -561,6 +581,33 @@ async function runQuoteOrder(
               line.lineTotalMinor / 100
             ).toFixed(0)}`
         ),
+        cart: {
+          cartId: cart.cartId,
+          revision: quote.revision,
+          itemCount: cart.items.reduce((sum, line) => sum + line.quantity, 0),
+          subtotalMinor: quote.subtotalMinor,
+          discountMinor: quote.discountMinor,
+          deliveryFeeMinor: quote.deliveryFeeMinor,
+          totalMinor: quote.totalMinor,
+          totalLabel: quote.totalLabel,
+          subtotalLabel: quote.subtotalLabel,
+          discountLabel: quote.discountLabel,
+          deliveryFeeLabel: quote.deliveryFeeLabel,
+          appliedOffer: quote.appliedOffer,
+          minimumOrderLabel: quote.minimumOrderLabel,
+          deliveryAreaStatus: quote.deliveryAreaStatus,
+          lines: cart.items.map((line) => ({
+            itemId: line.itemId,
+            name: line.name,
+            quantity: line.quantity,
+            unitPriceMinor: line.unitPriceMinor,
+            lineTotalMinor: line.lineTotalMinor,
+            options: (line.options ?? []).map((option) => ({
+              groupName: option.groupName,
+              optionNames: option.optionNames,
+            })),
+          })),
+        },
         nextStep:
           "Show the customer this total and ask them to confirm before calling create_order.",
       },
@@ -598,6 +645,13 @@ async function runCreateOrder(
     const money = (minor: number) =>
       `${context.currency} ${(minor / 100).toFixed(0)}`;
 
+    // The receipt is built from the stored order, never from model output.
+    const orderSnap = await tenantDoc(context.tenantId, "orders", result.orderId).get();
+    const orderData = orderSnap.exists ? orderSnap.data()! : null;
+    const orderItems = Array.isArray(orderData?.items)
+      ? (orderData?.items as Array<Record<string, unknown>>)
+      : [];
+
     return {
       ok: true,
       data: {
@@ -609,6 +663,27 @@ async function runCreateOrder(
         deliveryFeeLabel: money(result.pricing.deliveryFeeMinor),
         totalMinor: result.pricing.totalMinor,
         duplicate: result.duplicate,
+        fulfilmentType: String(orderData?.fulfilmentType ?? "delivery"),
+        address:
+          typeof orderData?.address === "string" ? orderData.address : null,
+        status: String(orderData?.status ?? "received"),
+        lines: orderItems.map((item) => ({
+          itemId: String(item.itemId ?? ""),
+          name: String(item.name ?? ""),
+          quantity: Number(item.quantity ?? 0),
+          unitPriceMinor: Number(item.unitPriceMinor ?? 0),
+          lineTotalMinor: Number(item.lineTotalMinor ?? 0),
+          options: Array.isArray(item.options)
+            ? (item.options as Array<{ groupName?: string; optionNames?: string[] }>).map(
+                (option) => ({
+                  groupName: String(option.groupName ?? ""),
+                  optionNames: Array.isArray(option.optionNames)
+                    ? option.optionNames.map(String)
+                    : [],
+                })
+              )
+            : [],
+        })),
       },
     };
   } catch (error: unknown) {

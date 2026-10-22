@@ -10,6 +10,7 @@ import {
   type WhatsappStatus,
 } from "@/components/settings/WhatsappModeCard";
 import { WidgetEmbedCard } from "@/components/settings/WidgetEmbedCard";
+import { WidgetBrandingCard } from "@/components/settings/WidgetBrandingCard";
 import { QrTrialCard } from "@/components/settings/QrTrialCard";
 import { BusinessProfileCard } from "@/components/settings/BusinessProfileCard";
 import { MetaChannelCard } from "@/components/settings/MetaChannelCard";
@@ -240,6 +241,8 @@ export default function SettingsPage() {
             />
           </>
         )}
+
+        <WidgetBrandingCard tenantId={tenantId} />
 
         <WidgetEmbedCard tenantId={tenantId} />
 
