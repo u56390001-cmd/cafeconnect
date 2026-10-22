@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Archive, ArrowDown, ArrowUp, Copy, Pencil, Plus, Printer, RotateCcw, Search } from "lucide-react";
 import { useAuth, authFetch } from "@/context/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty } from "@/components/ui/empty";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
+import { formatMoney } from "@/lib/domain/money";
 
 interface OrderItem {
   itemId: string;
@@ -82,6 +84,38 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
+function printTicket(order: Order) {
+  const lines = [
+    `Order ${order.orderNumber}`,
+    `Placed: ${new Date(order.createdAt).toLocaleString()}`,
+    `Type: ${order.fulfilment?.type === "pickup" ? "Pickup" : "Delivery"}`,
+    order.fulfilment?.address
+      ? `Address: ${order.fulfilment.address}`
+      : "",
+    `Customer: ${order.customer?.name ?? ""} · ${order.customer?.phone ?? ""}`,
+    "",
+    ...order.items.map(
+      (item) => `${item.quantity} x ${item.name} — ${formatMoney(item.unitPriceMinor * item.quantity, order.currency)}`
+    ),
+    "",
+    `Total: ${formatMoney(order.totalMinor, order.currency)}`,
+    order.appliedOffer ? `Offer: ${order.appliedOffer}` : "",
+    `Payment: ${order.paymentStatus}`,
+    order.notes ? `Notes: ${order.notes}` : "",
+  ].filter(Boolean);
+
+  const popup = window.open("", "_blank", "width=380,height=640");
+  if (!popup) return;
+  popup.document.write(
+    `<pre style="font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; white-space: pre-wrap;">${lines.join(
+      "\n"
+    )}</pre>`
+  );
+  popup.document.close();
+  popup.focus();
+  setTimeout(() => popup.print(), 200);
+}
+
 function OrdersPage() {
   const { user } = useAuth();
   const tenantId = user?.tenantId;
@@ -91,6 +125,8 @@ function OrdersPage() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [actionError, setActionError] = useState("");
+  const [newOrderCount, setNewOrderCount] = useState(0);
+  const lastSeenRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -110,6 +146,41 @@ function OrdersPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // New-order alerts: poll quietly and count unseen orders.
+  useEffect(() => {
+    if (!tenantId) return;
+    const tick = async () => {
+      try {
+        const res = await authFetch(`/api/orders?tenantId=${tenantId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = (data.data?.orders ?? []) as Order[];
+        const newest = list[0]?.createdAt ?? null;
+        if (lastSeenRef.current === null) {
+          lastSeenRef.current = newest;
+          return;
+        }
+        if (newest && newest !== lastSeenRef.current) {
+          const unseen = list.filter(
+            (order) =>
+              order.status === "received" &&
+              order.createdAt &&
+              order.createdAt > lastSeenRef.current!
+          );
+          if (unseen.length > 0) {
+            setNewOrderCount((count) => count + unseen.length);
+          }
+          lastSeenRef.current = newest;
+        }
+      } catch {
+        // polling is best effort
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 30000);
+    return () => clearInterval(timer);
+  }, [tenantId]);
 
   async function patchOrder(orderId: string, patch: Record<string, unknown>) {
     if (!tenantId) return;
@@ -214,6 +285,11 @@ function OrdersPage() {
           <CardTitle className="flex items-center justify-between text-base">
             <span>
               Orders ({filtered.length})
+              {newOrderCount > 0 ? (
+                <Badge variant="default" className="ml-2">
+                  {newOrderCount} new
+                </Badge>
+              ) : null}
             </span>
             <Button variant="outline" size="sm" onClick={() => void load()}>
               Refresh
@@ -293,6 +369,20 @@ function OrdersPage() {
                       {order.notes ? (
                         <p className="pt-1 text-xs text-muted-foreground">Note: {order.notes}</p>
                       ) : null}
+                      {order.statusHistory && order.statusHistory.length > 0 ? (
+                        <p className="pt-1 text-[11px] text-muted-foreground">
+                          {order.statusHistory
+                            .map(
+                              (entry) =>
+                                `${entry.from} → ${entry.to}${
+                                  entry.at
+                                    ? ` (${new Date(entry.at).toLocaleString()})`
+                                    : ""
+                                }`
+                            )
+                            .join(" · ")}
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       {(order.allowedNext ?? []).map((nextStatus) => (
@@ -318,6 +408,14 @@ function OrdersPage() {
                           Mark paid
                         </Button>
                       ) : null}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => printTicket(order)}
+                      >
+                        <Printer data-icon="inline-start" />
+                        Print
+                      </Button>
                       {order.paymentStatus !== "paid" && (
                         <>
                           <Button

@@ -3,6 +3,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { verifyTrackingToken } from "@/lib/tracking/token";
 import { checkRateLimit } from "@/lib/widget/service";
 import { checkSharedRateLimit } from "@/lib/security/rate-limit";
+import { formatMoney } from "@/lib/domain/money";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -80,9 +81,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       status: currentStatus,
       fulfilmentType,
       placedAt: order.createdAt ?? null,
-      totalLabel: `${order.currency ?? "PKR"} ${(
-        Number(order.totalMinor ?? 0) / 100
-      ).toFixed(0)}`,
+      totalLabel: formatMoney(Number(order.totalMinor ?? 0), order.currency ?? "PKR"),
       itemCount: (order.items ?? []).reduce(
         (sum: number, item: { quantity?: number }) =>
           sum + Number(item.quantity ?? 0),
