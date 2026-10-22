@@ -1,22 +1,16 @@
 import { tenantCollection, tenantDoc, requireTenantScope } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { getSession } from "@/lib/auth/session";
-import type { OrderStatus } from "@/lib/services/orders";
+import {
+  allowedTransitions,
+  checkTransition,
+  isOrderStatus,
+  isPaymentStatus,
+  type OrderStatus,
+} from "@/lib/domain/order-status";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
-
-const ORDER_STATUSES: OrderStatus[] = [
-  "received",
-  "confirmed",
-  "preparing",
-  "ready",
-  "dispatched",
-  "completed",
-  "declined",
-  "cancelled",
-];
-const PAYMENT_STATUSES = ["unpaid", "paid", "refunded"] as const;
 
 export async function GET(request: NextRequest): Promise<Response> {
   try {
@@ -64,12 +58,18 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const orders = snap.docs.map((doc) => {
       const d = doc.data();
+      const fulfilmentType = (
+        d.fulfilment?.type === "pickup" ? "pickup" : "delivery"
+      ) as "delivery" | "pickup";
+      const status = (d.status ?? "received") as OrderStatus;
       return {
         orderId: d.orderId || doc.id,
         orderNumber: d.orderNumber,
         channel: d.channel,
-        status: d.status,
+        status,
         paymentStatus: d.paymentStatus,
+        // The dashboard only offers transitions the server will accept.
+        allowedNext: allowedTransitions(status, fulfilmentType),
         items: d.items ?? [],
         totalMinor: d.totalMinor ?? 0,
         subtotalMinor: d.subtotalMinor ?? 0,
@@ -80,6 +80,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         customer: d.customer ?? {},
         fulfilment: d.fulfilment ?? {},
         notes: d.notes,
+        statusHistory: d.statusHistory ?? [],
         createdAt: d.createdAt,
       };
     });
@@ -101,26 +102,77 @@ export async function PATCH(request: NextRequest): Promise<Response> {
       return createApiError("Missing tenantId or orderId", 400);
     }
 
-    await requireTenantScope(tenantId, session.uid, "orders");
+    const ctx = await requireTenantScope(tenantId, session.uid, "orders");
+
+    // Payment changes need a stronger role than fulfilment changes.
+    if (paymentStatus !== undefined) {
+      await requireTenantScope(tenantId, session.uid, "manage");
+    }
+
+    const orderRef = tenantDoc(tenantId, "orders", orderId);
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) {
+      return createApiError("Order not found", 404);
+    }
+    const order = orderSnap.data() ?? {};
+    const fulfilmentType = (
+      order.fulfilment?.type === "pickup" ? "pickup" : "delivery"
+    ) as "delivery" | "pickup";
+    const currentStatus = (order.status ?? "received") as OrderStatus;
 
     const update: Record<string, unknown> = { updatedAt: new Date() };
 
     if (status !== undefined) {
-      if (!ORDER_STATUSES.includes(status)) {
+      if (!isOrderStatus(status)) {
         return createApiError("Invalid status", 400);
       }
+      const transition = checkTransition(currentStatus, status, fulfilmentType);
+      if (!transition.ok) {
+        return createApiError(
+          transition.error ?? "That status change is not allowed",
+          409,
+          "INVALID_TRANSITION"
+        );
+      }
       update.status = status;
+      update.statusHistory = [
+        ...((order.statusHistory as Array<Record<string, unknown>>) ?? []),
+        {
+          from: currentStatus,
+          to: status,
+          by: session.uid,
+          at: new Date().toISOString(),
+        },
+      ];
     }
+
     if (paymentStatus !== undefined) {
-      if (!PAYMENT_STATUSES.includes(paymentStatus)) {
+      if (!isPaymentStatus(paymentStatus)) {
         return createApiError("Invalid payment status", 400);
       }
       update.paymentStatus = paymentStatus;
+      update.paymentHistory = [
+        ...((order.paymentHistory as Array<Record<string, unknown>>) ?? []),
+        {
+          from: order.paymentStatus ?? "unpaid",
+          to: paymentStatus,
+          by: session.uid,
+          at: new Date().toISOString(),
+        },
+      ];
     }
 
-    await tenantDoc(tenantId, "orders", orderId).set(update, { merge: true });
+    await orderRef.set(update, { merge: true });
 
-    return createApiResponse({ orderId, status, paymentStatus });
+    return createApiResponse({
+      orderId,
+      status: update.status ?? currentStatus,
+      paymentStatus: update.paymentStatus ?? order.paymentStatus ?? "unpaid",
+      allowedNext: allowedTransitions(
+        (update.status ?? currentStatus) as OrderStatus,
+        fulfilmentType
+      ),
+    });
   } catch (error: unknown) {
     return handleApiError("api/orders", error);
   }

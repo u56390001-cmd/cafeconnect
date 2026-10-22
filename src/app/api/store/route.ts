@@ -104,6 +104,13 @@ export async function GET(request: NextRequest): Promise<Response> {
       items,
       offers: activeOffers,
       deliveryFeeMinor: Number(deliverySnap.data()?.deliveryFeeMinor ?? 0),
+      // Checkout transparency: the customer sees the rules before submitting.
+      minimumOrderMinor: Number(deliverySnap.data()?.minimumOrderMinor ?? 0),
+      pickupAvailable: deliverySnap.data()?.pickupAvailable !== false,
+      paymentMethods: deliverySnap.data()?.paymentMethods ?? "Cash on delivery",
+      deliveryAreaLabel: deliverySnap.data()?.deliveryArea ?? null,
+      orderInstructions: deliverySnap.data()?.orderInstructions ?? null,
+      city: profileData.address ?? null,
     });
   } catch (error: unknown) {
     return handleApiError("api/store", error);

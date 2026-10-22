@@ -2,6 +2,7 @@ import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { randomBytes } from "crypto";
 import { createHash } from "crypto";
+import { isFulfilmentType } from "@/lib/domain/order-status";
 
 export interface OrderItemInput {
   itemId: string;
@@ -18,6 +19,7 @@ export type OrderErrorCode =
   | "INVALID_ITEM_ID"
   | "INVALID_CUSTOMER_NAME"
   | "INVALID_CUSTOMER_PHONE"
+  | "INVALID_FULFILMENT_TYPE"
   | "ADDRESS_REQUIRED"
   | "INVALID_IDEMPOTENCY_KEY"
   | "ITEM_NOT_FOUND"
@@ -516,6 +518,12 @@ export async function createOrder(input: CreateOrderInput): Promise<{
   ) {
     throw new OrderError("INVALID_CUSTOMER_PHONE", "Invalid customer phone");
   }
+  if (!isFulfilmentType(input.fulfilmentType)) {
+    throw new OrderError(
+      "INVALID_FULFILMENT_TYPE",
+      "Unsupported fulfilment type"
+    );
+  }
   if (input.fulfilmentType === "delivery" && input.requireAddress !== false) {
     if (
       typeof input.address !== "string" ||
@@ -684,7 +692,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
   const currency = input.currency ?? (await getCurrency(input.tenantId));
   const orderNumber = await reserveOrderNumber(input.tenantId, currency);
 
-  await orderRef.set({
+  const orderDocument = {
     orderId: docId,
     tenantId: input.tenantId,
     orderNumber,
@@ -716,7 +724,38 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     createdBy: "storefront",
     createdAt: new Date(),
     updatedAt: new Date(),
+  };
+
+  // Atomic create-if-absent: two concurrent submits with the same
+  // idempotency key can only produce one logical order.
+  const db = getAdminDb();
+  const created = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (snap.exists) return false;
+    tx.set(orderRef, orderDocument);
+    return true;
   });
+
+  if (!created) {
+    // Another request won the race - return the canonical order.
+    const snap = await orderRef.get();
+    const d = snap.data()!;
+    return {
+      orderId: docId,
+      orderNumber: d.orderNumber,
+      pricing: {
+        subtotalMinor: d.subtotalMinor,
+        discountMinor: d.discountMinor,
+        deliveryFeeMinor: d.deliveryFeeMinor,
+        totalMinor: d.totalMinor,
+        appliedOfferName: d.appliedOfferName ?? null,
+        minimumOrderMinor: d.minimumOrderMinor ?? null,
+        deliveryAreaStatus: d.deliveryAreaStatus ?? "not_applicable",
+        deliveryAreaLabel: d.deliveryAreaLabel ?? null,
+      },
+      duplicate: true,
+    };
+  }
 
   // Index document so order lookup never needs a collection scan.
   await getAdminDb()

@@ -5,6 +5,8 @@ import { useAuth, authFetch } from "@/context/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty } from "@/components/ui/empty";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
 
@@ -20,6 +22,8 @@ interface Order {
   channel: string;
   status: string;
   paymentStatus: string;
+  /** Statuses the server will accept for this order right now. */
+  allowedNext?: string[];
   items: OrderItem[];
   totalMinor: number;
   discountMinor: number;
@@ -29,6 +33,12 @@ interface Order {
   customer: { name?: string; phone?: string };
   fulfilment: { type?: string; address?: string | null };
   notes?: string;
+  statusHistory?: Array<{
+    from: string;
+    to: string;
+    by?: string;
+    at?: string;
+  }>;
   createdAt: string;
 }
 
@@ -61,15 +71,15 @@ const statusBadge: Record<string, string> = {
   cancelled: "bg-destructive/10 text-destructive border-destructive/30",
 };
 
-const NEXT_ACTIONS: Record<string, Array<{ label: string; status: string }>> = {
-  received: [
-    { label: "Confirm", status: "confirmed" },
-    { label: "Decline", status: "declined" },
-  ],
-  confirmed: [{ label: "Preparing", status: "preparing" }],
-  preparing: [{ label: "Ready", status: "ready" }],
-  ready: [{ label: "Dispatched", status: "dispatched" }],
-  dispatched: [{ label: "Complete", status: "completed" }],
+const STATUS_LABELS: Record<string, string> = {
+  received: "Received",
+  confirmed: "Confirmed",
+  preparing: "Preparing",
+  ready: "Ready",
+  dispatched: "Dispatched",
+  completed: "Completed",
+  declined: "Declined",
+  cancelled: "Cancelled",
 };
 
 function OrdersPage() {
@@ -79,6 +89,8 @@ function OrdersPage() {
   const [carts, setCarts] = useState<CartView[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [actionError, setActionError] = useState("");
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -101,20 +113,38 @@ function OrdersPage() {
 
   async function patchOrder(orderId: string, patch: Record<string, unknown>) {
     if (!tenantId) return;
+    setActionError("");
     const res = await authFetch("/api/orders", {
       method: "PATCH",
       body: JSON.stringify({ tenantId, orderId, ...patch }),
     });
-    if (res.ok) {
-      setOrders((os) => os.map((o) => (o.orderId === orderId ? { ...o, ...patch } as Order : o)));
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      setActionError(
+        payload?.error?.message ?? "That change could not be saved. Please try again."
+      );
+      return;
     }
+    await load();
   }
 
   const filtered = useMemo(() => {
     if (!tenantId) return [];
-    if (filter === "all") return orders;
-    return orders.filter((o) => o.status === filter);
-  }, [orders, filter, tenantId]);
+    const needle = search.trim().toLowerCase();
+    return orders.filter((order) => {
+      if (filter !== "all" && order.status !== filter) return false;
+      if (!needle) return true;
+      const haystack = [
+        order.orderNumber,
+        order.customer?.name ?? "",
+        order.customer?.phone ?? "",
+        ...(order.items ?? []).map((item) => item.name ?? ""),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [orders, filter, search, tenantId]);
 
   if (!tenantId) return <NoTenantNotice />;
 
@@ -128,19 +158,21 @@ function OrdersPage() {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {["all", "received", "confirmed", "preparing", "completed", "cancelled"].map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-medium capitalize ${
-              filter === f
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-background text-muted-foreground hover:bg-accent"
-            }`}
-          >
-            {f}
-          </button>
-        ))}
+        {["all", "received", "confirmed", "preparing", "ready", "dispatched", "completed", "cancelled"].map(
+          (f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-medium capitalize ${
+                filter === f
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              {f}
+            </button>
+          )
+        )}
       </div>
 
       {carts.length > 0 && (
@@ -189,6 +221,21 @@ function OrdersPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search order number, customer or item"
+              aria-label="Search orders"
+              className="sm:max-w-xs"
+            />
+          </div>
+          {actionError ? (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Could not update the order</AlertTitle>
+              <AlertDescription>{actionError}</AlertDescription>
+            </Alert>
+          ) : null}
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading orders...</p>
           ) : filtered.length === 0 ? (
@@ -248,25 +295,29 @@ function OrdersPage() {
                       ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {NEXT_ACTIONS[order.status]?.map((action) => (
+                      {(order.allowedNext ?? []).map((nextStatus) => (
                         <Button
-                          key={action.status}
+                          key={nextStatus}
                           size="sm"
                           variant="outline"
-                          onClick={() => patchOrder(order.orderId, { status: action.status })}
+                          onClick={() =>
+                            patchOrder(order.orderId, { status: nextStatus })
+                          }
                         >
-                          {action.label}
+                          {STATUS_LABELS[nextStatus] ?? nextStatus}
                         </Button>
                       ))}
-                      {(order.status === "received" || order.status === "confirmed") && (
+                      {order.paymentStatus !== "paid" ? (
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => patchOrder(order.orderId, { status: "cancelled" })}
+                          onClick={() =>
+                            patchOrder(order.orderId, { paymentStatus: "paid" })
+                          }
                         >
-                          Cancel
+                          Mark paid
                         </Button>
-                      )}
+                      ) : null}
                       {order.paymentStatus !== "paid" && (
                         <>
                           <Button
