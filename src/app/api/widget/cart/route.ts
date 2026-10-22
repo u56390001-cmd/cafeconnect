@@ -138,7 +138,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     return createApiResponse(cartPayload(cart, quote, currency));
   } catch (error: unknown) {
-    return handleApiError("api/widget/cart", error);
+    return widgetCartError(error);
   }
 }
 
@@ -196,10 +196,26 @@ export async function POST(request: NextRequest): Promise<Response> {
         return createApiError("Invalid checkout request", 400);
       }
 
+      // The fulfilment type, address and contact details live on the cart:
+      // they must be set before the quote, because the quote (and the order)
+      // depend on them.
+      await updateCart({
+        tenantId: config.tenantId,
+        cartId: cart.cartId,
+        operation: "set",
+        items: [],
+        customerName: name,
+        customerPhone: phone.normalized,
+        fulfilmentType,
+        address: fulfilmentType === "delivery" ? address : undefined,
+        notes: typeof body.notes === "string" ? body.notes.slice(0, 300) : undefined,
+        currency,
+      });
+
       // A fresh server quote is required before the order is placed; the
       // server also derives a deterministic idempotency key from the cart
       // revision, so a repeated submit returns the same order.
-      const quoted = await quoteCart({
+      await quoteCart({
         tenantId: config.tenantId,
         cartId: cart.cartId,
         currency,
@@ -279,6 +295,23 @@ export async function POST(request: NextRequest): Promise<Response> {
       )
     );
   } catch (error: unknown) {
-    return handleApiError("api/widget/cart", error);
+    return widgetCartError(error);
   }
+}
+
+/**
+ * Cart and order failures are business errors, not server errors: the
+ * customer needs a readable reason, never a stack trace.
+ */
+function widgetCartError(error: unknown): Response {
+  const code = (error as { code?: unknown })?.code;
+  if (typeof code === "string") {
+    const status = code === "CART_NOT_FOUND" ? 404 : 400;
+    return createApiError(
+      error instanceof Error ? error.message : "We could not update your cart.",
+      status,
+      code
+    );
+  }
+  return handleApiError("api/widget/cart", error);
 }
