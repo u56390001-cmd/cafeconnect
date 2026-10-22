@@ -9,6 +9,16 @@ export interface StoreItem {
   name: string;
   description: string;
   priceMinor: number;
+  imageReferences?: Array<{
+    assetId: string;
+    url: string;
+    altText: string;
+    width: number | null;
+    height: number | null;
+  }>;
+  spiceLevel?: string;
+  dietaryLabels?: string[];
+  portion?: string;
 }
 
 export interface StoreOffer {

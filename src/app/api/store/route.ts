@@ -86,6 +86,15 @@ export async function GET(request: NextRequest): Promise<Response> {
           price > 0
         );
       })
+      // The restaurant's own order is the public order.
+      .sort((a, b) => {
+        const aOrder = Number(a.data().sortOrder ?? 0);
+        const bOrder = Number(b.data().sortOrder ?? 0);
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return String(a.data().name ?? "").localeCompare(
+          String(b.data().name ?? "")
+        );
+      })
       .map((doc) => {
         const d = doc.data();
         return {
@@ -94,6 +103,10 @@ export async function GET(request: NextRequest): Promise<Response> {
           name: d.name,
           description: d.description || "",
           priceMinor: Number(d.basePriceMinor),
+          imageReferences: d.imageReferences ?? [],
+          spiceLevel: d.spiceLevel ?? "",
+          dietaryLabels: d.dietaryLabels ?? [],
+          portion: d.portion ?? "",
         };
       });
 

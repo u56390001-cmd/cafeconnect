@@ -467,54 +467,79 @@ export default function StorePage() {
         <ul className="grid gap-3 sm:grid-cols-2">
           {visibleItems.map((item) => {
             const line = lines.find((l) => l.itemId === item.itemId);
+            const image = item.imageReferences?.[0];
             return (
               <li
                 key={item.itemId}
-                className="flex flex-col justify-between gap-3 rounded-lg border border-border bg-card p-4"
+                className="flex flex-col overflow-hidden rounded-lg border border-border bg-card"
               >
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="font-medium">{item.name}</p>
-                    <p className="shrink-0 font-medium tabular-nums">
-                      {formatMoney(item.priceMinor, currency)}
-                    </p>
-                  </div>
-                  {item.description ? (
-                    <p className="text-sm text-muted-foreground">
-                      {item.description}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-2">
-                  {line ? (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          changeQuantity(item.itemId, line.quantity - 1)
-                        }
-                      >
-                        −
-                      </Button>
-                      <span className="w-6 text-center text-sm tabular-nums">
-                        {line.quantity}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          changeQuantity(item.itemId, line.quantity + 1)
-                        }
-                      >
-                        +
-                      </Button>
+                {image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={image.url}
+                    alt={image.altText || item.name}
+                    width={image.width ?? 640}
+                    height={image.height ?? 360}
+                    loading="lazy"
+                    decoding="async"
+                    className="aspect-[16/10] w-full object-cover"
+                  />
+                ) : null}
+                <div className="flex flex-1 flex-col justify-between gap-3 p-4">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-medium">{item.name}</p>
+                      <p className="shrink-0 font-medium tabular-nums">
+                        {formatMoney(item.priceMinor, currency)}
+                      </p>
                     </div>
-                  ) : (
-                    <Button size="sm" onClick={() => addItem(item)}>
-                      Add
-                    </Button>
-                  )}
+                    {item.description ? (
+                      <p className="text-sm text-muted-foreground">
+                        {item.description}
+                      </p>
+                    ) : null}
+                    {item.spiceLevel ? (
+                      <p className="text-xs text-muted-foreground">
+                        Spice: {item.spiceLevel}
+                      </p>
+                    ) : null}
+                    {item.portion ? (
+                      <p className="text-xs text-muted-foreground">
+                        {item.portion}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {line ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            changeQuantity(item.itemId, line.quantity - 1)
+                          }
+                        >
+                          −
+                        </Button>
+                        <span className="w-6 text-center text-sm tabular-nums">
+                          {line.quantity}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            changeQuantity(item.itemId, line.quantity + 1)
+                          }
+                        >
+                          +
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button size="sm" onClick={() => addItem(item)}>
+                        Add
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </li>
             );

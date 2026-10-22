@@ -20,9 +20,13 @@ interface ItemPayload {
   categoryId: string;
   name: string;
   description?: string;
-  aliases?: string[];
   basePriceMinor: number;
   availability?: Availability;
+  sortOrder?: number;
+  aliases?: string[];
+  spiceLevel?: string;
+  dietaryLabels?: string[];
+  portion?: string;
   publicationStatus?: PublicationStatus;
 }
 
@@ -62,7 +66,6 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const snap = await tenantCollection(ctx.tenantId, "menuItems").get();
     const items = snap.docs
-      .filter((d) => d.data().status !== "archived")
       .sort(
         (a, b) =>
           String(a.data().name ?? "").localeCompare(String(b.data().name ?? ""))
@@ -78,6 +81,12 @@ export async function GET(request: NextRequest): Promise<Response> {
           basePriceMinor: d.basePriceMinor ?? 0,
           availability: d.availability ?? "available",
           publicationStatus: d.publicationStatus ?? "draft",
+          status: d.status ?? "active",
+          sortOrder: d.sortOrder ?? 0,
+          spiceLevel: d.spiceLevel ?? "",
+          dietaryLabels: d.dietaryLabels ?? [],
+          portion: d.portion ?? "",
+          imageReferences: d.imageReferences ?? [],
           updatedAt: d.updatedAt,
         };
       });
@@ -221,6 +230,36 @@ export async function PATCH(request: NextRequest): Promise<Response> {
       if (!AVAILABILITY.includes(body.availability))
         return createApiError("Invalid availability", 400);
       update.availability = body.availability;
+    }
+    if (body.sortOrder !== undefined) {
+      if (!Number.isFinite(body.sortOrder)) {
+        return createApiError("Invalid sort order", 400);
+      }
+      update.sortOrder = Math.round(body.sortOrder);
+    }
+    if (body.aliases !== undefined) {
+      update.aliases = Array.isArray(body.aliases)
+        ? body.aliases
+            .filter((alias: unknown): alias is string => typeof alias === "string")
+            .map((alias: string) => alias.trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 20)
+        : [];
+    }
+    if (body.spiceLevel !== undefined) {
+      update.spiceLevel = String(body.spiceLevel ?? "").slice(0, 40);
+    }
+    if (body.dietaryLabels !== undefined) {
+      update.dietaryLabels = Array.isArray(body.dietaryLabels)
+        ? body.dietaryLabels
+            .filter((label: unknown): label is string => typeof label === "string")
+            .map((label: string) => label.trim())
+            .filter(Boolean)
+            .slice(0, 10)
+        : [];
+    }
+    if (body.portion !== undefined) {
+      update.portion = String(body.portion ?? "").slice(0, 60);
     }
     if (body.publicationStatus !== undefined) {
       if (!PUBLICATION.includes(body.publicationStatus))
