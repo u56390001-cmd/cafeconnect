@@ -173,6 +173,10 @@ export async function POST(request: NextRequest): Promise<Response> {
         ...validated,
       });
 
+      // A signed, high-entropy tracking token for the customer.
+      const { createTrackingToken } = await import("@/lib/tracking/token");
+      const trackingToken = createTrackingToken(config.tenantId, result.orderId);
+
       return createApiResponse(
         {
           orderNumber: result.orderNumber,
@@ -180,6 +184,10 @@ export async function POST(request: NextRequest): Promise<Response> {
           discountMinor: result.pricing.discountMinor,
           appliedOffer: result.pricing.appliedOfferName,
           duplicate: result.duplicate,
+          trackingToken,
+          trackUrl: `/track?key=${encodeURIComponent(key)}&token=${encodeURIComponent(
+            trackingToken
+          )}`,
         },
         201
       );

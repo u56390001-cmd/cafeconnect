@@ -87,7 +87,11 @@ export default function StorePage() {
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [placed, setPlaced] = useState<{ orderNumber: string; totalLabel: string } | null>(null);
+  const [placed, setPlaced] = useState<{
+    orderNumber: string;
+    totalLabel: string;
+    trackUrl: string | null;
+  } | null>(null);
   const [announcement, setAnnouncement] = useState("");
 
   // Resolve the store key from the URL, then load the catalogue.
@@ -337,6 +341,7 @@ export default function StorePage() {
       setPlaced({
         orderNumber: payload.data.orderNumber,
         totalLabel: formatMoney(payload.data.totalMinor, catalog.currency),
+        trackUrl: payload.data.trackUrl ?? null,
       });
       setLines([]);
       setDetails(emptyDetails);
@@ -381,7 +386,16 @@ export default function StorePage() {
         <p className="text-sm text-muted-foreground">
           The restaurant will call you to confirm the order.
         </p>
-        <Button onClick={() => setPlaced(null)}>Back to menu</Button>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {placed.trackUrl ? (
+            <Button asChild>
+              <a href={placed.trackUrl}>Track order</a>
+            </Button>
+          ) : null}
+          <Button variant="outline" onClick={() => setPlaced(null)}>
+            Back to menu
+          </Button>
+        </div>
       </main>
     );
   }
