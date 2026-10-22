@@ -12,7 +12,7 @@ const Alert = React.forwardRef<
     destructive:
       "border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive",
     success:
-      "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 border-emerald-200 [&>svg]:text-emerald-600",
+      "border-success/30 bg-success/10 text-success [&>svg]:text-success",
   };
 
   return (

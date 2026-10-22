@@ -9,6 +9,12 @@ import type {
  * the browser only renders what the pricing engine returns.
  */
 
+export interface PosImageReference {
+  assetId?: string;
+  url: string;
+  altText?: string;
+}
+
 export interface PosMenuItem {
   itemId: string;
   categoryId: string;
@@ -17,7 +23,7 @@ export interface PosMenuItem {
   basePriceMinor: number;
   availability: "available" | "soldOut" | "paused";
   publicationStatus: "draft" | "published";
-  imageReferences?: string[];
+  imageReferences?: PosImageReference[];
   optionGroups?: unknown;
 }
 

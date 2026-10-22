@@ -8,7 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
+import { CalendarDays } from "lucide-react";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface Booking {
   bookingId: string;
@@ -92,12 +95,20 @@ function BookingsPage() {
 
   async function setStatus(bookingId: string, status: string) {
     if (!tenantId) return;
-    const res = await authFetch("/api/bookings", {
-      method: "PATCH",
-      body: JSON.stringify({ tenantId, bookingId, status }),
-    });
-    if (res.ok) {
-      setBookings((bs) => bs.map((b) => (b.bookingId === bookingId ? { ...b, status } : b)));
+    setError("");
+    try {
+      const res = await authFetch("/api/bookings", {
+        method: "PATCH",
+        body: JSON.stringify({ tenantId, bookingId, status }),
+      });
+      if (res.ok) {
+        setBookings((bs) => bs.map((b) => (b.bookingId === bookingId ? { ...b, status } : b)));
+      } else {
+        const payload = await res.json().catch(() => null);
+        setError(payload?.error?.message ?? "That change could not be saved. Please try again.");
+      }
+    } catch {
+      setError("That change could not be saved. Please try again.");
     }
   }
 
@@ -105,12 +116,11 @@ function BookingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Bookings</h1>
-        <p className="text-sm text-muted-foreground">
-          Table bookings. New bookings start as pending until you confirm.
-        </p>
-      </div>
+      <PageHeader
+        icon={CalendarDays}
+        title="Bookings"
+        description="Table bookings. New bookings start as pending until you confirm."
+      />
 
       <Card>
         <CardHeader>
@@ -194,7 +204,17 @@ function BookingsPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-sm text-muted-foreground">Loading bookings...</p>
+            <ul className="flex flex-col divide-y" aria-hidden="true">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <li key={index} className="flex items-center gap-3 py-3">
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-56" />
+                  </div>
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                </li>
+              ))}
+            </ul>
           ) : bookings.length === 0 ? (
             <Empty>
               <p>No bookings yet.</p>

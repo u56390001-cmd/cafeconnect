@@ -15,8 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tag } from "lucide-react";
 import { Empty } from "@/components/ui/empty";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface Offer {
   offerId: string;
@@ -149,32 +153,49 @@ function OffersPage() {
 
   async function setStatus(offerId: string, status: string) {
     if (!tenantId) return;
-    const res = await authFetch("/api/offers", {
-      method: "PATCH",
-      body: JSON.stringify({ tenantId, offerId, status }),
-    });
-    if (res.ok) await load();
+    setError("");
+    try {
+      const res = await authFetch("/api/offers", {
+        method: "PATCH",
+        body: JSON.stringify({ tenantId, offerId, status }),
+      });
+      if (res.ok) await load();
+      else {
+        const payload = await res.json().catch(() => null);
+        setError(payload?.error?.message ?? "That change could not be saved.");
+      }
+    } catch {
+      setError("That change could not be saved. Please try again.");
+    }
   }
 
   async function remove(offerId: string) {
     if (!tenantId) return;
-    const res = await authFetch(
-      `/api/offers?tenantId=${tenantId}&offerId=${offerId}`,
-      { method: "DELETE" }
-    );
-    if (res.ok) await load();
+    setError("");
+    try {
+      const res = await authFetch(
+        `/api/offers?tenantId=${tenantId}&offerId=${offerId}`,
+        { method: "DELETE" }
+      );
+      if (res.ok) await load();
+      else {
+        const payload = await res.json().catch(() => null);
+        setError(payload?.error?.message ?? "The offer could not be deleted.");
+      }
+    } catch {
+      setError("The offer could not be deleted. Please try again.");
+    }
   }
 
   if (!tenantId) return <NoTenantNotice />
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Deals &amp; Offers</h1>
-        <p className="text-sm text-muted-foreground">
-          Active offers are shown to customers by your AI assistant and applied at checkout.
-        </p>
-      </div>
+      <PageHeader
+        icon={Tag}
+        title="Deals & Offers"
+        description="Active offers are shown to customers by your AI assistant and applied at checkout."
+      />
 
       <Card>
         <CardHeader>
@@ -234,13 +255,12 @@ function OffersPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="offerScope">Applies to category (optional)</Label>
-              <select
+              <NativeSelect
                 id="offerScope"
                 value={form.scopeCategoryId}
                 onChange={(e) =>
                   setForm({ ...form, scopeCategoryId: e.target.value })
                 }
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value="">Whole order</option>
                 {categories.map((c) => (
@@ -248,7 +268,7 @@ function OffersPage() {
                     {c.name} only
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
               <p className="text-xs text-muted-foreground">
                 Scoped offers discount only the items of that category, and the
                 minimum order is checked against that category subtotal.
@@ -301,7 +321,17 @@ function OffersPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-sm text-muted-foreground">Loading offers...</p>
+            <ul className="flex flex-col divide-y" aria-hidden="true">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <li key={index} className="flex items-center gap-3 py-3">
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-56" />
+                  </div>
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                </li>
+              ))}
+            </ul>
           ) : offers.length === 0 ? (
             <Empty>
               <p>No offers yet. Create one above.</p>

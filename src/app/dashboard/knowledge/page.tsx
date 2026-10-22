@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { BookOpen, Pencil, Trash2 } from "lucide-react";
@@ -11,6 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { NativeSelect } from "@/components/ui/native-select";
 
 type KnowledgeCategory = "faq" | "policy" | "businessInfo" | "document";
 
@@ -169,16 +171,11 @@ export default function KnowledgePage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="flex items-center gap-2 text-2xl font-bold">
-          <BookOpen className="size-5 text-primary" aria-hidden="true" />
-          Knowledge Base
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Business facts the AI agent is allowed to use. Only published entries
-          reach the assistant.
-        </p>
-      </header>
+      <PageHeader
+        icon={BookOpen}
+        title="Knowledge Base"
+        description="Business facts the AI agent is allowed to use. Only published entries reach the assistant."
+      />
 
       {error && (
         <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -215,47 +212,44 @@ export default function KnowledgePage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="kbCategory">Category</Label>
-                <select
+                <NativeSelect
                   id="kbCategory"
                   value={form.category}
                   onChange={(e) =>
                     setForm({ ...form, category: e.target.value as KnowledgeCategory })
                   }
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                 >
                   {CATEGORIES.map((c) => (
                     <option key={c.value} value={c.value}>
                       {c.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="kbLanguage">Language</Label>
-                <select
+                <NativeSelect
                   id="kbLanguage"
                   value={form.language}
                   onChange={(e) => setForm({ ...form, language: e.target.value })}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                 >
                   {LANGUAGES.map((l) => (
                     <option key={l.value} value={l.value}>
                       {l.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="kbStatus">Status</Label>
-                <select
+                <NativeSelect
                   id="kbStatus"
                   value={form.status}
                   onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                 >
                   <option value="published">Published</option>
                   <option value="draft">Draft</option>
-                </select>
+                </NativeSelect>
               </div>
             </div>
 
@@ -327,7 +321,7 @@ export default function KnowledgePage() {
                       {item.content}
                     </p>
                     <p className="pt-1 text-[10px] text-muted-foreground">
-                      {item.category} · {item.language} · v{item.version}
+                      {item.category} Â· {item.language} Â· v{item.version}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -371,3 +365,4 @@ export default function KnowledgePage() {
     </div>
   );
 }
+

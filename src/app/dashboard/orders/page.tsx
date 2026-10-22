@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty } from "@/components/ui/empty";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { printBill } from "@/lib/print/receipt";
 
 interface OrderItem {
@@ -123,6 +124,7 @@ function OrdersPage() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [actionError, setActionError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [newOrderCount, setNewOrderCount] = useState(0);
   const lastSeenRef = useRef<string | null>(null);
 
@@ -135,7 +137,12 @@ function OrdersPage() {
         const data = await res.json();
         setOrders(data.data?.orders ?? []);
         setCarts(data.data?.carts ?? []);
+        setLoadError("");
+      } else {
+        setLoadError("Orders could not be loaded. Please try again.");
       }
+    } catch {
+      setLoadError("Orders could not be loaded. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -219,12 +226,10 @@ function OrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Orders</h1>
-        <p className="text-sm text-muted-foreground">
-          Orders from your storefront. Confirm status and payment tracking here.
-        </p>
-      </div>
+      <PageHeader
+        title="Orders"
+        description="Orders from your storefront. Confirm status and payment tracking here."
+      />
 
       <div className="flex flex-wrap gap-2">
         {["all", "received", "confirmed", "preparing", "ready", "dispatched", "completed", "cancelled"].map(
@@ -308,6 +313,12 @@ function OrdersPage() {
             <Alert variant="destructive" className="mb-4">
               <AlertTitle>Could not update the order</AlertTitle>
               <AlertDescription>{actionError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {loadError ? (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Could not load orders</AlertTitle>
+              <AlertDescription>{loadError}</AlertDescription>
             </Alert>
           ) : null}
           {loading ? (
@@ -425,23 +436,6 @@ function OrdersPage() {
                         <Printer data-icon="inline-start" />
                         Print
                       </Button>
-                      {order.paymentStatus !== "paid" && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => patchOrder(order.orderId, { paymentStatus: "paid" })}
-                          >
-                            Mark Paid
-                          </Button>
-                          <span
-                            aria-hidden="true"
-                            className={`h-2 w-2 rounded-full ${
-                              order.paymentStatus === "unpaid" ? "bg-warning" : "bg-destructive"
-                            }`}
-                          />
-                        </>
-                      )}
                     </div>
                   </div>
                 </li>

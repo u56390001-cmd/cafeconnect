@@ -1,6 +1,6 @@
 "use client";
 
-import { Package } from "lucide-react";
+import { Package, PackagePlus } from "lucide-react";
 import {
   Empty,
   EmptyContent,
@@ -10,16 +10,16 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/dashboard/page-header";
 
 export default function PackagesPage() {
   return (
     <div className="flex flex-col gap-6">
-      <header>
-        <h1 className="text-2xl font-bold text-foreground">Packages</h1>
-        <p className="text-muted-foreground">
-          Plan tiers and pricing for your business.
-        </p>
-      </header>
+      <PageHeader
+        icon={PackagePlus}
+        title="Packages"
+        description="Plan tiers and pricing for your business."
+      />
 
       <Empty className="rounded-lg border border-dashed border-border">
         <EmptyHeader>

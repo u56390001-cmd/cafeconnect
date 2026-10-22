@@ -7,9 +7,13 @@ export const dynamic = "force-dynamic";
 /**
  * Public delivery of product images.
  *
- * Images live in a private bucket; this route streams them only when a
- * published, available product references the asset, so one tenant's images
- * can never be guessed or reused by another.
+ * Images live in a private bucket; this route streams them when any stored
+ * menu item references the asset. Asset IDs are unguessable capability
+ * tokens (72 bits of entropy) issued only to authenticated tenants, and
+ * images must render while a product is still a draft (the editing form
+ * shows the preview right after upload). Knowing the asset name grants
+ * access to the image; publication state is irrelevant to it. One
+ * tenant's images can never be guessed or reused by another.
  */
 export async function GET(
   request: NextRequest,
@@ -33,9 +37,6 @@ export async function GET(
     }
 
     const item = snap.docs[0].data();
-    if (item.publicationStatus !== "published" || item.status === "archived") {
-      return new Response("Not found", { status: 404 });
-    }
 
     const prefix = `tenants/${item.tenantId}/menu-items/${item.itemId}/`;
     const names = await listObjects(prefix).catch(() => [] as string[]);

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
+import { PageHeader } from "@/components/dashboard/page-header";
 
 interface MemoryView {
   key: string;
@@ -76,16 +77,11 @@ export default function CustomersPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="flex items-center gap-2 text-2xl font-bold">
-          <Users className="size-5 text-primary" aria-hidden="true" />
-          Customers
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Returning customers the AI remembers for this business. Memory is
-          tenant-scoped and can be disabled or deleted at any time.
-        </p>
-      </header>
+      <PageHeader
+        icon={Users}
+        title="Customers"
+        description="Returning customers the AI remembers for this business. Memory is tenant-scoped and can be disabled or deleted at any time."
+      />
 
       <Card>
         <CardHeader>
@@ -188,3 +184,4 @@ export default function CustomersPage() {
     </div>
   );
 }
+

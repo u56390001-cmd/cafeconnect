@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { Settings } from "lucide-react";
 import { useAuth, authFetch } from "@/context/AuthContext";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ApiKeyCard, SecurityNotice, type KeyStatus } from "@/components/settings/ApiKeyCard";
@@ -14,6 +15,7 @@ import { WidgetBrandingCard } from "@/components/settings/WidgetBrandingCard";
 import { QrTrialCard } from "@/components/settings/QrTrialCard";
 import { BusinessProfileCard } from "@/components/settings/BusinessProfileCard";
 import { MetaChannelCard } from "@/components/settings/MetaChannelCard";
+import { PageHeader } from "@/components/dashboard/page-header";
 
 interface ApiKeySummary {
   keyId: string;
@@ -176,14 +178,17 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="p-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground">Tenant Settings</h1>
-        <p className="text-muted-foreground">
-          Manage API keys and channel integrations for tenant{" "}
-          <span className="font-mono text-sm">{tenantId}</span>
-        </p>
-      </header>
+    <div className="space-y-6">
+      <PageHeader
+        icon={Settings}
+        title="Tenant Settings"
+        description={
+          <>
+            Manage API keys and channel integrations for tenant{" "}
+            <span className="font-mono text-sm">{tenantId}</span>
+          </>
+        }
+      />
 
       {message && (
         <div className="mb-6 max-w-2xl">

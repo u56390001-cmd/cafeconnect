@@ -57,13 +57,16 @@ export function ProductGrid({
   const activeCategories = useMemo(
     () =>
       categories
-        .filter((category) => (category.status ?? "active") !== "hidden")
+        .filter((category) => (category.status ?? "active") === "active")
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     [categories]
   );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const byCategory = new Map(
+      categories.map((category) => [category.categoryId, category.sortOrder ?? 0] as const)
+    );
     return items
       .filter(
         (item) =>
@@ -79,9 +82,13 @@ export function ProductGrid({
       .sort((a, b) => {
         const availability =
           Number(a.availability === "available") - Number(b.availability === "available");
-        return availability !== 0 ? availability : a.name.localeCompare(b.name);
+        if (availability !== 0) return availability;
+        const bySortOrder =
+          (byCategory.get(a.categoryId) ?? 0) - (byCategory.get(b.categoryId) ?? 0);
+        if (bySortOrder !== 0) return bySortOrder;
+        return a.name.localeCompare(b.name);
       });
-  }, [items, selectedCategoryId, query]);
+  }, [items, categories, selectedCategoryId, query]);
 
   const categoryLabel = (categoryId: string): string =>
     categories.find((c) => c.categoryId === categoryId)?.name ?? "Menu";
@@ -190,10 +197,13 @@ export function ProductGrid({
                   aria-disabled={soldOut}
                 >
                   <div className="mb-2 aspect-square w-full overflow-hidden rounded-md bg-muted">
-                    {item.imageReferences?.[0] ? (
+                    {item.imageReferences?.[0]?.url ? (
                       // Menu images are served by the tenant-configured
                       // public URLs; onError falls back to the initial tile.
-                      <ProductImage imageUrl={item.imageReferences[0]} name={item.name} />
+                      <ProductImage
+                        imageUrl={item.imageReferences[0].url}
+                        name={item.name}
+                      />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-orange-50 text-2xl font-semibold text-orange-300">
                         {item.name.slice(0, 1)}

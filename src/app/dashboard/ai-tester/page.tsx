@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
+import { PageHeader } from "@/components/dashboard/page-header";
 
 const SUGGESTIONS = [
   "What is on the menu and what does it cost?",
@@ -55,31 +56,25 @@ export default function AiTesterPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold">
-            <Sparkles className="size-5 text-primary" aria-hidden="true" />
-            AI Agent Tester
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Test the AI agent exactly like a customer sees it in the chat widget.
-            Replies are grounded in your menu, offers, business profile and
-            knowledge base.
-          </p>
-        </div>
-        {widgetId && (
-          <Button variant="outline" size="sm" asChild>
-            <a
-              href={`/widget?key=${widgetId}`}
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              <ExternalLink data-icon="inline-start" />
-              Open standalone widget
-            </a>
-          </Button>
-        )}
-      </header>
+      <PageHeader
+        icon={Sparkles}
+        title="AI Agent Tester"
+        description="Test the AI agent exactly like a customer sees it in the chat widget. Replies are grounded in your menu, offers, business profile and knowledge base."
+        actions={
+          widgetId ? (
+            <Button variant="outline" size="sm" asChild>
+              <a
+                href={`/widget?key=${widgetId}`}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                <ExternalLink data-icon="inline-start" />
+                Open standalone widget
+              </a>
+            </Button>
+          ) : undefined
+        }
+      />
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <Card>

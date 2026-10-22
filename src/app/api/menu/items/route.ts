@@ -159,14 +159,18 @@ export async function POST(request: NextRequest): Promise<Response> {
       categoryId: validated.categoryId,
       name: validated.name.trim(),
       description: body.description?.trim() ?? "",
-      aliases: Array.isArray(body.aliases)
-        ? body.aliases
-            .filter((alias: unknown): alias is string => typeof alias === "string")
-            .map((alias: string) => alias.trim().toLowerCase())
-            .filter(Boolean)
-            .slice(0, 20)
-        : [],
+      aliases: validated.aliases,
       basePriceMinor: body.basePriceMinor,
+      spiceLevel:
+        typeof body.spiceLevel === "string" ? body.spiceLevel.slice(0, 40) : "",
+      portion: typeof body.portion === "string" ? body.portion.slice(0, 60) : "",
+      dietaryLabels: Array.isArray(body.dietaryLabels)
+        ? body.dietaryLabels
+            .filter((label: unknown): label is string => typeof label === "string")
+            .map((label: string) => label.trim())
+            .filter(Boolean)
+            .slice(0, 10)
+        : [],
       optionGroups: (() => {
         const parsed = parseOptionGroups(body.optionGroups);
         return parsed.ok ? parsed.groups : [];
@@ -176,6 +180,10 @@ export async function POST(request: NextRequest): Promise<Response> {
       imageReferences: [],
       branchId: null,
       status: "active",
+      sortOrder:
+        typeof body.sortOrder === "number" && Number.isFinite(body.sortOrder)
+          ? Math.round(body.sortOrder)
+          : 0,
       version: 1,
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
@@ -226,6 +234,9 @@ export async function PATCH(request: NextRequest): Promise<Response> {
         body.categoryId
       ).get();
       if (!categorySnap.exists) return createApiError("Category not found", 400);
+      if (categorySnap.data()?.status !== "active") {
+        return createApiError("That category is archived", 400);
+      }
       update.categoryId = body.categoryId;
     }
     if (body.basePriceMinor !== undefined) {
@@ -247,15 +258,6 @@ export async function PATCH(request: NextRequest): Promise<Response> {
         return createApiError("Invalid sort order", 400);
       }
       update.sortOrder = Math.round(body.sortOrder);
-    }
-    if (body.aliases !== undefined) {
-      update.aliases = Array.isArray(body.aliases)
-        ? body.aliases
-            .filter((alias: unknown): alias is string => typeof alias === "string")
-            .map((alias: string) => alias.trim().toLowerCase())
-            .filter(Boolean)
-            .slice(0, 20)
-        : [];
     }
     if (body.spiceLevel !== undefined) {
       update.spiceLevel = String(body.spiceLevel ?? "").slice(0, 40);

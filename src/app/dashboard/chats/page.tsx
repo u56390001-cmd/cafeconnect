@@ -1,12 +1,15 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { MessageSquare, Send } from "lucide-react";
 import { useAuth, authFetch } from "@/context/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
+import { Input } from "@/components/ui/input";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
+import { PageHeader } from "@/components/dashboard/page-header";
 
 interface Conversation {
   conversationId: string;
@@ -175,12 +178,22 @@ function ChatsPage() {
 
   async function setAiEnabled(conversationId: string, aiEnabled: boolean) {
     if (!tenantId) return;
-    const res = await authFetch("/api/conversations", {
-      method: "PATCH",
-      body: JSON.stringify({ tenantId, conversationId, aiEnabled }),
-    });
-    if (res.ok) {
-      await load();
+    try {
+      const res = await authFetch("/api/conversations", {
+        method: "PATCH",
+        body: JSON.stringify({ tenantId, conversationId, aiEnabled }),
+      });
+      if (res.ok) {
+        await load();
+        setReplyNotice(aiEnabled ? "Assistant re-enabled." : "Assistant paused.");
+      } else {
+        const payload = await res.json().catch(() => null);
+        setReplyNotice(
+          payload?.error?.message ?? "That change could not be saved. Please try again."
+        );
+      }
+    } catch {
+      setReplyNotice("That change could not be saved. Please try again.");
     }
   }
 
@@ -189,7 +202,13 @@ function ChatsPage() {
   const selectedConversation = conversations.find((c) => c.conversationId === selected);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
+    <div className="space-y-4">
+      <PageHeader
+        icon={MessageSquare}
+        title="Conversations"
+        description="Website and WhatsApp chats. Send a reply to take over the conversation from the AI."
+      />
+      <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
       <Card className="self-start">
         <CardHeader>
           <CardTitle className="flex items-center justify-between text-base">
@@ -201,7 +220,7 @@ function ChatsPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-sm text-muted-foreground">Loading conversations...</p>
+            <p className="text-sm text-muted-foreground">Loading conversations…</p>
           ) : conversations.length === 0 ? (
             <Empty>
               <p>No conversations yet.</p>
@@ -369,14 +388,16 @@ function ChatsPage() {
         {selected && (
           <div className="space-y-2 border-t border-border p-3">
             <form onSubmit={sendReply} className="flex gap-2">
-              <input
+              <Input
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
                 placeholder="Reply to the customer (sent on the same channel)…"
-                className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                className="flex-1"
                 disabled={sending}
+                aria-label="Reply to the customer"
               />
               <Button type="submit" size="sm" disabled={sending || !reply.trim()}>
+                <Send data-icon="inline-start" />
                 {sending ? "Sending…" : "Send"}
               </Button>
             </form>
@@ -390,6 +411,7 @@ function ChatsPage() {
           </div>
         )}
       </Card>
+      </div>
     </div>
   );
 }
