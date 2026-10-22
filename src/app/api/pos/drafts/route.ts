@@ -57,8 +57,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const ctx = await requireTenantScope(tenantId, session.uid, "orders");
 
+    // In-progress work only: abandoned (deleted) and submitted carts must
+    // never reappear in the draft list.
     const snap = await tenantCollection(ctx.tenantId, "carts")
       .where("channel", "==", "pos")
+      .where("status", "in", ["active", "awaiting_confirmation"])
       .get();
 
     const drafts = snap.docs

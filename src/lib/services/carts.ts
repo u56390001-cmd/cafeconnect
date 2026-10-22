@@ -316,11 +316,16 @@ export async function updateCart(input: {
   } else if (input.operation === "replace") {
     items = [];
     // Continue into merge below so the replacement lines are priced.
+    // Kitchen notes must survive a replace: POS drafts are saved with them.
     if (input.items && input.items.length > 0) {
       const normalized = input.items.map((entry) => ({
         itemId: String(entry.itemId ?? ""),
         quantity: Math.trunc(Number(entry.quantity ?? 0)),
         selections: normalizeSelections(entry.selections),
+        note:
+          typeof entry.note === "string" && entry.note.trim()
+            ? entry.note.slice(0, 200)
+            : undefined,
       }));
       for (const entry of normalized) {
         if (!entry.itemId) {
