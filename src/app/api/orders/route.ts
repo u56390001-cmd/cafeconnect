@@ -1,6 +1,7 @@
 import { tenantCollection, tenantDoc, requireTenantScope } from "@/lib/tenancy/resolver";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { getSession } from "@/lib/auth/session";
+import { findOrderByNumber } from "@/lib/services/orders";
 import {
   allowedTransitions,
   checkTransition,
@@ -109,8 +110,16 @@ export async function PATCH(request: NextRequest): Promise<Response> {
       await requireTenantScope(tenantId, session.uid, "manage");
     }
 
-    const orderRef = tenantDoc(tenantId, "orders", orderId);
-    const orderSnap = await orderRef.get();
+    // Staff may send either the document id or the printed order number.
+    let orderRef = tenantDoc(tenantId, "orders", orderId);
+    let orderSnap = await orderRef.get();
+    if (!orderSnap.exists) {
+      const indexed = await findOrderByNumber(tenantId, orderId);
+      if (indexed) {
+        orderRef = tenantDoc(tenantId, "orders", indexed.orderId);
+        orderSnap = await orderRef.get();
+      }
+    }
     if (!orderSnap.exists) {
       return createApiError("Order not found", 404);
     }
