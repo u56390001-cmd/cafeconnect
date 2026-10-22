@@ -1,93 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowDown, ArrowUp, Copy, Pencil, Plus, Printer, RotateCcw, Search } from "lucide-react";
+import { Search, ShoppingCart } from "lucide-react";
 import { useAuth, authFetch } from "@/context/AuthContext";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Empty } from "@/components/ui/empty";
 import { NoTenantNotice } from "@/components/dashboard/NoTenantNotice";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { printBill } from "@/lib/print/receipt";
-
-interface OrderItem {
-  itemId: string;
-  name: string;
-  quantity: number;
-  unitPriceMinor: number;
-  options?: Array<{
-    groupName: string;
-    optionNames: string[];
-  }>;
-}
-interface Order {
-  orderId: string;
-  orderNumber: string;
-  channel: string;
-  status: string;
-  paymentStatus: string;
-  /** Statuses the server will accept for this order right now. */
-  allowedNext?: string[];
-  items: OrderItem[];
-  totalMinor: number;
-  discountMinor: number;
-  deliveryFeeMinor: number;
-  currency: string;
-  appliedOffer: string | null;
-  customer: { name?: string; phone?: string };
-  fulfilment: { type?: string; address?: string | null };
-  notes?: string;
-  statusHistory?: Array<{
-    from: string;
-    to: string;
-    by?: string;
-    at?: string;
-  }>;
-  createdAt: string;
-}
-
-interface CartView {
-  cartId: string;
-  channel: string;
-  status: string;
-  items: Array<{ name: string; quantity: number }>;
-  cartRevision: number;
-  totalLabel: string | null;
-  customer: { name?: string | null; phone?: string | null } | null;
-  updatedAt: string;
-}
-
-const CHANNEL_LABEL: Record<string, string> = {
-  web: "Website",
-  whatsapp_qr: "WhatsApp",
-  whatsapp_meta: "WhatsApp (Meta)",
-  storefront: "Store",
-};
-
-const statusBadge: Record<string, string> = {
-  received: "bg-warning/10 text-warning border-warning/30",
-  confirmed: "bg-primary/10 text-primary border-primary/30",
-  preparing: "bg-primary/10 text-primary border-primary/30",
-  ready: "bg-primary/10 text-primary border-primary/30",
-  dispatched: "bg-primary/10 text-primary border-primary/30",
-  completed: "bg-success/10 text-success border-success/30",
-  declined: "bg-destructive/10 text-destructive border-destructive/30",
-  cancelled: "bg-destructive/10 text-destructive border-destructive/30",
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  received: "Received",
-  confirmed: "Confirmed",
-  preparing: "Preparing",
-  ready: "Ready",
-  dispatched: "Dispatched",
-  completed: "Completed",
-  declined: "Declined",
-  cancelled: "Cancelled",
-};
+import { OrderStatusRail, type StatusFilter } from "@/components/orders/order-status-rail";
+import { OrderRow } from "@/components/orders/order-row";
+import { CHANNEL_LABEL, STATUS_LABELS, type CartView, type Order } from "@/components/orders/types";
+import { cn } from "@/lib/utils";
 
 function printTicket(order: Order) {
   printBill({
@@ -121,11 +48,12 @@ function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [carts, setCarts] = useState<CartView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
   const [actionError, setActionError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [newOrderCount, setNewOrderCount] = useState(0);
+  const [showCarts, setShowCarts] = useState(false);
   const lastSeenRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -204,6 +132,14 @@ function OrdersPage() {
     await load();
   }
 
+  const counts = useMemo(() => {
+    const map: Record<string, number> = { all: orders.length };
+    for (const order of orders) {
+      map[order.status] = (map[order.status] ?? 0) + 1;
+    }
+    return map;
+  }, [orders]);
+
   const filtered = useMemo(() => {
     if (!tenantId) return [];
     const needle = search.trim().toLowerCase();
@@ -222,228 +158,173 @@ function OrdersPage() {
     });
   }, [orders, filter, search, tenantId]);
 
+  const activeCarts = carts.filter((cart) => cart.items.length > 0);
+  const emptyCarts = carts.length - activeCarts.length;
+  const usefulCarts = activeCarts.slice(0, 6);
+
   if (!tenantId) return <NoTenantNotice />;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Orders"
-        description="Orders from your storefront. Confirm status and payment tracking here."
+        description="Move each order through the pipeline and keep payment status current."
       />
 
-      <div className="flex flex-wrap gap-2">
-        {["all", "received", "confirmed", "preparing", "ready", "dispatched", "completed", "cancelled"].map(
-          (f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`rounded-full border px-3 py-1.5 text-xs font-medium capitalize ${
-                filter === f
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-background text-muted-foreground hover:bg-accent"
-              }`}
-            >
-              {f}
-            </button>
-          )
-        )}
-      </div>
-
-      {carts.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              In progress ({carts.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="divide-y">
-              {carts.map((cart) => (
-                <li key={cart.cartId} className="flex flex-wrap items-center gap-2 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">
-                      {cart.items.map((i) => `${i.quantity}x ${i.name}`).join(", ") ||
-                        "Empty cart"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {cart.customer?.name ?? "Guest"} ·{" "}
-                      {CHANNEL_LABEL[cart.channel] ?? cart.channel} · revision{" "}
-                      {cart.cartRevision} ·{" "}
-                      {new Date(cart.updatedAt).toLocaleString()}
-                    </p>
-                  </div>
-                  <Badge variant="outline">{cart.status}</Badge>
-                  {cart.totalLabel && (
-                    <Badge variant="secondary">{cart.totalLabel}</Badge>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between text-base">
-            <span>
-              Orders ({filtered.length})
-              {newOrderCount > 0 ? (
-                <Badge variant="default" className="ml-2">
-                  {newOrderCount} new
-                </Badge>
-              ) : null}
-            </span>
-            <Button variant="outline" size="sm" onClick={() => void load()}>
-              Refresh
-            </Button>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search order number, customer or item"
-              aria-label="Search orders"
-              className="sm:max-w-xs"
-            />
+      <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
+        {/* Stage rail: filters + in-progress carts */}
+        <aside className="space-y-5 lg:sticky lg:top-6 lg:self-start">
+          <div>
+            <p className="mb-2 hidden text-xs font-medium text-muted-foreground lg:block">
+              Pipeline
+            </p>
+            <OrderStatusRail counts={counts} active={filter} onChange={setFilter} />
           </div>
+
+          {carts.length > 0 && (
+            <div className="hidden lg:block">
+              <button
+                type="button"
+                onClick={() => setShowCarts((open) => !open)}
+                aria-expanded={showCarts}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ShoppingCart className="text-muted-foreground" size={16} aria-hidden="true" />
+                Carts in progress
+                <span className="ml-auto rounded-full bg-accent px-1.5 py-0.5 text-[11px] tabular-nums text-foreground">
+                  {carts.length}
+                </span>
+              </button>
+              {showCarts && (
+                <div className="mt-1 max-h-72 space-y-1 overflow-y-auto rounded-lg border border-border bg-card p-2">
+                  {usefulCarts.map((cart) => (
+                    <div key={cart.cartId} className="rounded-md px-2 py-1.5 text-xs">
+                      <p className="truncate font-medium">
+                        {cart.customer?.name || "Guest"}
+                        <span className="font-normal text-muted-foreground">
+                          {" · "}
+                          {CHANNEL_LABEL[cart.channel] ?? cart.channel}
+                        </span>
+                      </p>
+                      <p className="truncate text-muted-foreground">
+                        {cart.items.map((item) => `${item.quantity}× ${item.name}`).join(", ")}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {cart.status.replace(/_/g, " ")}
+                        {cart.totalLabel ? ` · ${cart.totalLabel}` : ""}
+                      </p>
+                    </div>
+                  ))}
+                  {emptyCarts > 0 && (
+                    <p className="px-2 py-1 text-[11px] text-muted-foreground/70">
+                      …and {emptyCarts} empty {emptyCarts === 1 ? "cart" : "carts"}
+                    </p>
+                  )}
+                  {activeCarts.length > usefulCarts.length && (
+                    <p className="px-2 py-1 text-[11px] text-muted-foreground">
+                      Showing {usefulCarts.length} of {activeCarts.length} filled carts
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </aside>
+
+        {/* Order list for the selected stage */}
+        <section className="min-w-0 space-y-4" aria-label="Orders list">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative sm:max-w-xs sm:flex-1">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search order, customer or item"
+                aria-label="Search orders"
+                className="pl-9"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              {newOrderCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setFilter("received");
+                    setNewOrderCount(0);
+                  }}
+                  className="border-warning/30 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
+                >
+                  {newOrderCount} new
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => void load()}>
+                Refresh
+              </Button>
+            </div>
+          </div>
+
           {actionError ? (
-            <Alert variant="destructive" className="mb-4">
+            <Alert variant="destructive">
               <AlertTitle>Could not update the order</AlertTitle>
               <AlertDescription>{actionError}</AlertDescription>
             </Alert>
           ) : null}
           {loadError ? (
-            <Alert variant="destructive" className="mb-4">
+            <Alert variant="destructive">
               <AlertTitle>Could not load orders</AlertTitle>
               <AlertDescription>{loadError}</AlertDescription>
             </Alert>
           ) : null}
+
           {loading ? (
-            <p className="text-sm text-muted-foreground">Loading orders...</p>
-          ) : filtered.length === 0 ? (
-            <Empty>
-              <p>No orders {filter === "all" ? "yet" : `with status "${filter}"`}.</p>
-              <p className="text-xs text-muted-foreground">
-                Share your store link so customers can order.
-              </p>
-            </Empty>
-          ) : (
-            <ul className="divide-y">
-              {filtered.map((order) => (
-                <li key={order.orderId} className="py-4">
-                  <div className="flex flex-wrap items-start gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-semibold">#{order.orderNumber}</p>
-                        <Badge variant="outline">
-                          {CHANNEL_LABEL[order.channel] ?? order.channel}
-                        </Badge>
-                        <Badge variant="secondary" className={statusBadge[order.status]}>
-                          {order.status}
-                        </Badge>
-                        <Badge variant={order.paymentStatus === "paid" ? "default" : "outline"}>
-                          {order.paymentStatus === "paid" ? "PAID" : order.paymentStatus}
-                        </Badge>
-                      </div>
-                      <p className="pt-1 text-xs text-muted-foreground">
-                        {order.customer.name} · {order.customer.phone} ·{" "}
-                        {order.fulfilment?.type === "delivery"
-                          ? `Delivery: ${order.fulfilment.address}`
-                          : "Pickup"}{" "}
-                        · {new Date(order.createdAt).toLocaleString()}
-                      </p>
-                      <ul className="pt-2 text-sm">
-                        {order.items.map((item) => (
-                          <li key={item.itemId}>
-                            {item.quantity}× {item.name}
-                            {item.options?.length ? (
-                              <span className="text-xs text-muted-foreground">
-                                {" — "}
-                                {item.options
-                                  .map(
-                                    (option) =>
-                                      `${option.groupName}: ${(option.optionNames ?? []).join(", ")}`
-                                  )
-                                  .join(" · ")}
-                              </span>
-                            ) : null}
-                          </li>
-                        ))}
-                      </ul>
-                      <p className="pt-1 text-sm font-medium">
-                        Total: {order.currency}{" "}
-                        {(order.totalMinor / 100).toFixed(0)}
-                        {order.discountMinor ? (
-                          <span className="text-success">
-                            {" "}
-                            (saved {Math.round(order.discountMinor / 100)})
-                          </span>
-                        ) : null}
-                      </p>
-                      {order.appliedOffer && (
-                        <p className="text-xs text-muted-foreground">Offer: {order.appliedOffer}</p>
-                      )}
-                      {order.notes ? (
-                        <p className="pt-1 text-xs text-muted-foreground">Note: {order.notes}</p>
-                      ) : null}
-                      {order.statusHistory && order.statusHistory.length > 0 ? (
-                        <p className="pt-1 text-[11px] text-muted-foreground">
-                          {order.statusHistory
-                            .map(
-                              (entry) =>
-                                `${entry.from} → ${entry.to}${
-                                  entry.at
-                                    ? ` (${new Date(entry.at).toLocaleString()})`
-                                    : ""
-                                }`
-                            )
-                            .join(" · ")}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {(order.allowedNext ?? []).map((nextStatus) => (
-                        <Button
-                          key={nextStatus}
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            patchOrder(order.orderId, { status: nextStatus })
-                          }
-                        >
-                          {STATUS_LABELS[nextStatus] ?? nextStatus}
-                        </Button>
-                      ))}
-                      {order.paymentStatus !== "paid" ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            patchOrder(order.orderId, { paymentStatus: "paid" })
-                          }
-                        >
-                          Mark paid
-                        </Button>
-                      ) : null}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => printTicket(order)}
-                      >
-                        <Printer data-icon="inline-start" />
-                        Print
-                      </Button>
-                    </div>
+            <ul className="space-y-3" aria-hidden="true">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <li key={index} className="rounded-lg border border-border bg-card p-4">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-4 w-16 rounded-full" />
+                    <Skeleton className="ml-auto h-4 w-14" />
+                  </div>
+                  <Skeleton className="mt-3 h-3.5 w-64" />
+                  <div className="mt-4 flex items-center gap-2 border-t border-border pt-3">
+                    <Skeleton className="h-4 w-16" />
+                    <Skeleton className="ml-auto h-7 w-20" />
+                    <Skeleton className="h-7 w-16" />
                   </div>
                 </li>
               ))}
             </ul>
+          ) : filtered.length === 0 ? (
+            <Empty className="rounded-lg border border-dashed border-border">
+              <p>
+                {filter === "all"
+                  ? "No orders yet."
+                  : `No orders in the ${STATUS_LABELS[filter] ?? filter} stage.`}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {filter === "all"
+                  ? "Share your store link so customers can order."
+                  : "Try another stage from the pipeline or clear the search."}
+              </p>
+            </Empty>
+          ) : (
+            <ul className="space-y-3">
+              {filtered.map((order) => (
+                <OrderRow
+                  key={order.orderId}
+                  order={order}
+                  onPatch={patchOrder}
+                  onPrint={printTicket}
+                />
+              ))}
+            </ul>
           )}
-        </CardContent>
-      </Card>
+        </section>
+      </div>
     </div>
   );
 }

@@ -22,8 +22,8 @@ const CATEGORY_COLORS = [
   "bg-violet-100 text-violet-800",
 ];
 
-/** Ten cards per page reads as one screen; the rest sit behind page numbers. */
-const PAGE_SIZE = 10;
+/** Eight cards per page read as one screen; the rest sit behind page numbers. */
+const PAGE_SIZE = 8;
 
 interface ProductGridProps {
   items: PosMenuItem[];
@@ -177,7 +177,7 @@ export function ProductGrid({
       </div>
 
       <div className="min-h-0 flex-1 -mr-2 pr-2 overflow-y-auto">
-        <div className="grid grid-cols-2 gap-3 pb-4 sm:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 pb-3 sm:grid-cols-3 xl:grid-cols-4">
           {loading &&
             Array.from({ length: 8 }).map((_, index) => (
               <div key={index} className="rounded-lg border bg-white p-3">
@@ -249,12 +249,14 @@ export function ProductGrid({
                 </button>
               );
             })}
-          </div>
-          {pageCount > 1 && (
-            <nav
-              aria-label="Product pages"
-              className="mt-1 flex flex-wrap items-center justify-center gap-1 pb-2"
-            >
+        </div>
+      </div>
+
+      {pageCount > 1 && (
+        <nav
+          aria-label="Product pages"
+          className="flex flex-wrap items-center justify-center gap-1 border-t pt-2"
+        >
               <Button
                 size="sm"
                 variant="outline"
@@ -296,9 +298,8 @@ export function ProductGrid({
               <span className="ml-2 text-[11px] text-muted-foreground tabular-nums">
                 {filtered.length} products · page {safePage}/{pageCount}
               </span>
-            </nav>
-          )}
-        </div>
+        </nav>
+      )}
     </section>
   );
 }

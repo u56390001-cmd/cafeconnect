@@ -27,9 +27,11 @@ export async function authFetch(
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  if (init?.body && !headers.has("Content-Type")) {
+  if (typeof init?.body === "string" && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  // FormData bodies must keep their browser-generated multipart boundary,
+  // so only string bodies get the JSON content type.
   return fetch(input, { ...init, headers });
 }
 
