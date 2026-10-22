@@ -26,13 +26,24 @@ describe("POS pricing uses the shared engine", () => {
     const result = computePricing(
       [posLine("shwarma", "grill", 30000, 1), posLine("shwarma", "grill", 63000, 2)],
       [],
-      0,
+      10000,
       "pickup"
     );
     expect(result.subtotalMinor).toBe(156000);
     expect(result.discountMinor).toBe(0);
     expect(result.deliveryFeeMinor).toBe(0);
     expect(result.totalMinor).toBe(156000);
+  });
+
+  it("a delivery order pays the configured delivery fee", () => {
+    const result = computePricing(
+      [posLine("shwarma", "grill", 30000, 1)],
+      [],
+      10000,
+      "delivery"
+    );
+    expect(result.deliveryFeeMinor).toBe(10000);
+    expect(result.totalMinor).toBe(40000);
   });
 
   it("the quoted total matches line displays: base + option delta × quantity", () => {

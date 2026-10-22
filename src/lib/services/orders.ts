@@ -170,7 +170,10 @@ export function computePricing(
   const discountMinor = offer?.discountMinor ?? 0;
   const appliedOfferName = offer?.name ?? null;
 
-  let fee = deliveryFeeMinor;
+  // The configured delivery fee only belongs on delivery orders; a pickup
+  // customer never pays for delivery. A free-delivery offer further zeroes
+  // it below.
+  let fee = fulfilmentType === "delivery" ? deliveryFeeMinor : 0;
   if (freeDeliveryOffer && fulfilmentType === "delivery") {
     fee = 0;
   }

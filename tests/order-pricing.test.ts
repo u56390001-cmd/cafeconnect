@@ -86,14 +86,15 @@ describe("order pricing", () => {
     expect(result.totalMinor).toBe(40000);
   });
 
-  it("does not waive the delivery fee for pickup orders", () => {
+  it("never charges the delivery fee on a pickup order", () => {
     const result = computePricing(
       [line("a", "cat1", 40000, 1)],
       [{ type: "freeDelivery", status: "active" }],
       10000,
       "pickup"
     );
-    expect(result.deliveryFeeMinor).toBe(10000);
+    expect(result.deliveryFeeMinor).toBe(0);
+    expect(result.totalMinor).toBe(40000);
   });
 
   it("ignores expired offers", () => {
