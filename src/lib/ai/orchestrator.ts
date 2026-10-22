@@ -590,6 +590,17 @@ export async function respondToCustomer(options: {
       customerName: context.businessName,
       languageMode,
       requestId,
+      // Even the fallback keeps the verified blocks (cart, receipt, cards).
+      ui: await buildWidgetBlocks({
+        tenantId,
+        channel,
+        currency: context.currency,
+        productIds: toolState.productIds,
+        cart: toolState.cart,
+        order: toolState.orderSnapshot,
+        handoff: toolState.handoff,
+        message,
+      }),
     };
   }
 
