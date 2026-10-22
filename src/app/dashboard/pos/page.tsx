@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { formatMoney } from "@/lib/domain/money";
+import { extractApiErrorMessage } from "@/lib/api/error-message";
 import {
   optionGroupsOf,
   type ItemSelection,
@@ -116,8 +117,8 @@ export default function PosPage() {
         const itemsJson = await itemsRes.json();
         const categoriesJson = await categoriesRes.json();
         if (cancelled) return;
-        if (itemsRes.ok) setItems(itemsJson.items ?? []);
-        if (categoriesRes.ok) setCategories(categoriesJson.categories ?? []);
+        setItems(itemsJson.data?.items ?? []);
+        setCategories(categoriesJson.data?.categories ?? []);
         if (recentRes.ok) {
           const recentJson = await recentRes.json();
           const recent = recentJson.data ?? recentJson;
@@ -138,6 +139,36 @@ export default function PosPage() {
     })();
     return () => {
       cancelled = true;
+    };
+  }, [tenantId]);
+
+  /* --------- Silent menu refresh when the tab regains focus --------- */
+  useEffect(() => {
+    if (!tenantId) return;
+    const refetch = () => {
+      authFetch(`/api/menu/items?tenantId=${tenantId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json?.data?.items) setItems(json.data.items);
+          return undefined;
+        })
+        .catch(() => undefined);
+      authFetch(`/api/menu/categories?tenantId=${tenantId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json?.data?.categories) setCategories(json.data.categories);
+          return undefined;
+        })
+        .catch(() => undefined);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refetch();
+    };
+    window.addEventListener("focus", refetch);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", refetch);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [tenantId]);
 
@@ -345,7 +376,9 @@ export default function PosPage() {
         });
         const json = await response.json().catch(() => ({}));
         if (!response.ok) {
-          setSubmitError(json.error ?? json.message ?? "The order could not be saved.");
+          setSubmitError(
+            extractApiErrorMessage(json, "The order could not be saved.")
+          );
           return false;
         }
         const data = json.data ?? json;
@@ -518,7 +551,9 @@ export default function PosPage() {
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setError(json.error ?? json.message ?? "The draft could not be saved.");
+        setError(
+          extractApiErrorMessage(json, "The draft could not be saved.")
+        );
       } else {
         setNotice(
           `Draft saved with ${lines.length} items. Continue later from the draft list.`
