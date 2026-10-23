@@ -1,6 +1,8 @@
 import { requireTenantScope, tenantDoc, UnauthorizedError } from "@/lib/tenancy/resolver";
-import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { createApiError, createApiResponse, handleApiError } from "@/lib/api/response";
 import { getSession } from "@/lib/auth/session";
+import { resolveTenantForSession } from "@/lib/auth/tenant-resolution";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -24,9 +26,16 @@ export async function POST(request: NextRequest): Promise<Response> {
     const { tenantId, businessName, businessType, country, currency } =
       await request.json();
 
-    if (!tenantId || !businessName) {
-      return createApiError("Missing required fields", 400);
+    if (!businessName) {
+      return createApiError("Business name is required", 400);
     }
+
+    // The client may race /api/auth/me right after signup and send no tenantId
+    // yet — resolve (or provision) the workspace from the session instead of
+    // failing with a generic validation error.
+    const resolved = tenantId
+      ? { tenantId }
+      : await resolveTenantForSession(session.uid);
     if (typeof businessType !== "string" || !BUSINESS_TYPES.includes(businessType)) {
       throw new UnauthorizedError("Invalid business type", 400);
     }
@@ -34,7 +43,14 @@ export async function POST(request: NextRequest): Promise<Response> {
       throw new UnauthorizedError("Invalid business name", 400);
     }
 
-    const ctx = await requireTenantScope(tenantId, session.uid, "owner");
+    const ctx = await requireTenantScope(resolved.tenantId, session.uid, "owner");
+
+    // Keep the user document linked so later sessions resolve the tenant
+    // even if signup never wrote it (e.g. Google sign-in).
+    await getAdminDb()
+      .collection("users")
+      .doc(session.uid)
+      .set({ tenantId: ctx.tenantId, updatedAt: new Date() }, { merge: true });
 
     await tenantDoc(ctx.tenantId, "profile", "main").set(
       {

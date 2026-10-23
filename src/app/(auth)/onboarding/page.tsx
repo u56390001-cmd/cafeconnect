@@ -20,7 +20,7 @@ interface BusinessForm {
 }
 
 export default function OnboardingPage() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const router = useRouter();
 
   const [step, setStep] = useState<"business" | "complete">("business");
@@ -64,6 +64,9 @@ export default function OnboardingPage() {
       }
 
       setStep("complete");
+      // Sync the sidebar/topbar identity with the (possibly newly provisioned)
+      // workspace so the dashboard renders data on the first visit.
+      void refreshUser();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Onboarding failed");
     } finally {
