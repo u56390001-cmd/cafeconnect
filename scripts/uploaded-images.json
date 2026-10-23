@@ -1,0 +1,68 @@
+[
+  {
+    "itemId": "4uJvX3iLmuZhltnhLNfv",
+    "label": "Chicken Shawarma",
+    "assetId": "img_bb986c4e1432845154",
+    "url": "/api/media/img_bb986c4e1432845154"
+  },
+  {
+    "itemId": "CUB0QQjI0S9ocCTMLMuy",
+    "label": "Special Biryani (Chicken + Beef)",
+    "assetId": "img_8aa44a706c683ca70d",
+    "url": "/api/media/img_8aa44a706c683ca70d"
+  },
+  {
+    "itemId": "Ew48c91RsQyQNsxPuum6",
+    "label": "Chicken Burger",
+    "assetId": "img_83e20204dd5902f1df",
+    "url": "/api/media/img_83e20204dd5902f1df"
+  },
+  {
+    "itemId": "OmvFNhwQyG2RZvCX3aRq",
+    "label": "Zinger Shawarma",
+    "assetId": "img_04a253fe3f413246cb",
+    "url": "/api/media/img_04a253fe3f413246cb"
+  },
+  {
+    "itemId": "QswMO0xmo5bFQE6fWakg",
+    "label": "Chicken Biryani Half",
+    "assetId": "img_e056ef0778326cced4",
+    "url": "/api/media/img_e056ef0778326cced4"
+  },
+  {
+    "itemId": "a44bXAS2Ncg35R9AGsx4",
+    "label": "Chicken Tikka Biryani",
+    "assetId": "img_95dc6fe2b35b9501ee",
+    "url": "/api/media/img_95dc6fe2b35b9501ee"
+  },
+  {
+    "itemId": "kBweZZEpe7F4mQkP2VyP",
+    "label": "Chicken Briyani Full",
+    "assetId": "img_eeece8c1a2fd2242f5",
+    "url": "/api/media/img_eeece8c1a2fd2242f5"
+  },
+  {
+    "itemId": "mXExSI3K6It6YOqyOap4",
+    "label": "Cheese Pizza (Medium)",
+    "assetId": "img_dd08bdd1c9bd95bec5",
+    "url": "/api/media/img_dd08bdd1c9bd95bec5"
+  },
+  {
+    "itemId": "O9KM1NfgEVBfjulxUCYt",
+    "label": "Beef Biryani",
+    "assetId": "img_b5a2e8881f9dc48224",
+    "url": "/api/media/img_b5a2e8881f9dc48224"
+  },
+  {
+    "itemId": "ouU8CB8VoM71FBLgnuAf",
+    "label": "Chicken Fajita Pizza (Medium)",
+    "assetId": "img_73265fa71a360ff2e7",
+    "url": "/api/media/img_73265fa71a360ff2e7"
+  },
+  {
+    "itemId": "r2rLCNn7FjT3Hzzbj6Si",
+    "label": "Beef Burger",
+    "assetId": "img_df10c144cb5298f759",
+    "url": "/api/media/img_df10c144cb5298f759"
+  }
+]
