@@ -1,13 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ClipboardList, Download, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  Download,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
 import { useAuth, authFetch } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import {
   Select,
   SelectContent,
@@ -30,7 +47,8 @@ import {
   OrderTableRow,
   money,
   paymentLabel,
-  whenAt,
+  whenDay,
+  whenTime,
 } from "@/components/orders/orders-table";
 import { STATUS_LABELS, type CartView, type Order } from "@/components/orders/types";
 import { cn } from "@/lib/utils";
@@ -61,7 +79,7 @@ function printTicket(order: Order) {
   });
 }
 
-/** Tabs grouped after the reference layout: every pipeline stage stays one click away. */
+/** Tabs grouped after the reference layout: every pipeline stage one click away. */
 const TABS: Array<{ id: string; label: string; statuses?: string[] }> = [
   { id: "all", label: "All Menu" },
   { id: "pending", label: "Pending", statuses: ["received"] },
@@ -72,12 +90,18 @@ const TABS: Array<{ id: string; label: string; statuses?: string[] }> = [
   { id: "cancelled", label: "Cancelled", statuses: ["declined", "cancelled"] },
 ];
 
-const ROS_STATUSES = ["received"];
+const PENDING_STATUSES = ["received"];
 const PREPARING_STATUSES = ["confirmed", "preparing", "ready"];
-const READY_STATUSES = ["ready"];
 const COMPLETED_STATUSES = ["completed"];
 
 const PAGE_SIZES = [8, 16, 24, 32];
+
+type SortKey = "date" | "amount";
+type SortDir = "asc" | "desc";
+interface SortState {
+  key: SortKey;
+  dir: SortDir;
+}
 
 function pageList(total: number, current: number): Array<number | "…"> {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
@@ -90,7 +114,7 @@ function pageList(total: number, current: number): Array<number | "…"> {
   return [1, "…", current - 1, current, current + 1, "…", total];
 }
 
-/** Last 7 days vs the 7 days before, per status group; null when no baseline exists. */
+/** Last 7 days vs the 7 days before, per status group; null when no baseline. */
 function periodDelta(list: Order[], statuses?: string[]): number | null {
   const now = Date.now();
   const week = 7 * 86_400_000;
@@ -127,7 +151,15 @@ function DeltaLine({ delta }: { delta: number | null }) {
 }
 
 function exportCsv(list: Order[]) {
-  const header = ["Order ID", "Customer", "Items", "Amount", "Status", "Date & Time", "Payment Status"];
+  const header = [
+    "Order ID",
+    "Customer",
+    "Items",
+    "Amount",
+    "Status",
+    "Date & Time",
+    "Payment Status",
+  ];
   const escape = (value: string) => `"${value.replace(/"/g, '""')}"`;
   const rows = list.map((order) =>
     [
@@ -136,7 +168,7 @@ function exportCsv(list: Order[]) {
       (order.items ?? []).map((item) => `${item.quantity}x ${item.name}`).join("; "),
       money(order.totalMinor, order.currency),
       STATUS_LABELS[order.status] ?? order.status,
-      whenAt(order.createdAt),
+      `${whenDay(order.createdAt)} ${whenTime(order.createdAt)}`,
       paymentLabel(order.paymentStatus),
     ]
       .map(escape)
@@ -161,6 +193,7 @@ function OrdersPage() {
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("all");
+  const [sort, setSort] = useState<SortState>({ key: "date", dir: "desc" });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pageSize, setPageSize] = useState(8);
   const [page, setPage] = useState(1);
@@ -257,7 +290,7 @@ function OrdersPage() {
     if (!tenantId) return [];
     const tabDef = TABS.find((item) => item.id === tab) ?? TABS[0];
     const needle = search.trim().toLowerCase();
-    return orders.filter((order) => {
+    const matched = orders.filter((order) => {
       if (tabDef.statuses && !tabDef.statuses.includes(order.status)) return false;
       if (paymentFilter === "paid" && order.paymentStatus !== "paid") return false;
       if (paymentFilter === "unpaid" && order.paymentStatus === "paid") return false;
@@ -272,7 +305,20 @@ function OrdersPage() {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [orders, tab, search, paymentFilter, tenantId]);
+    const sorted = [...matched].sort((a, b) => {
+      if (sort.key === "amount") {
+        return sort.dir === "asc"
+          ? a.totalMinor - b.totalMinor
+          : b.totalMinor - a.totalMinor;
+      }
+      const ta = Date.parse(a.createdAt);
+      const tb = Date.parse(b.createdAt);
+      const na = Number.isNaN(ta) ? 0 : ta;
+      const nb = Number.isNaN(tb) ? 0 : tb;
+      return sort.dir === "asc" ? na - nb : nb - na;
+    });
+    return sorted;
+  }, [orders, tab, search, paymentFilter, sort, tenantId]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -281,13 +327,10 @@ function OrdersPage() {
     return filtered.slice(start, start + pageSize);
   }, [filtered, safePage, pageSize]);
 
-  // Keep the page anchored and clear stale selections when the view changes.
-  useEffect(() => {
-    setPage(safePage);
-  }, [safePage]);
+  // Clear stale selections when the view changes.
   useEffect(() => {
     setSelected(new Set());
-  }, [tab, search, paymentFilter]);
+  }, [tab, search, paymentFilter, sort]);
 
   const allPageSelected =
     pageItems.length > 0 && pageItems.every((order) => selected.has(order.orderId));
@@ -316,6 +359,15 @@ function OrdersPage() {
     });
   };
 
+  const toggleSort = (key: SortKey) => {
+    setSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: key === "amount" ? "desc" : "asc" }
+    );
+    setPage(1);
+  };
+
   const exportTarget =
     selected.size > 0 ? orders.filter((order) => selected.has(order.orderId)) : filtered;
 
@@ -323,60 +375,52 @@ function OrdersPage() {
 
   const kpis = [
     { label: "Total Orders", value: countByGroup(), statuses: undefined as string[] | undefined },
-    { label: "Pending Orders", value: countByGroup(ROS_STATUSES), statuses: ROS_STATUSES },
-    { label: "Preparing Orders", value: countByGroup(PREPARING_STATUSES), statuses: PREPARING_STATUSES },
+    {
+      label: "Pending Orders",
+      value: countByGroup(PENDING_STATUSES),
+      statuses: PENDING_STATUSES,
+    },
+    {
+      label: "Preparing Orders",
+      value: countByGroup(PREPARING_STATUSES),
+      statuses: PREPARING_STATUSES,
+    },
     { label: "Saved Carts", value: activeCarts.length, statuses: null },
-    { label: "Completed Orders", value: countByGroup(COMPLETED_STATUSES), statuses: COMPLETED_STATUSES },
+    {
+      label: "Completed Orders",
+      value: countByGroup(COMPLETED_STATUSES),
+      statuses: COMPLETED_STATUSES,
+    },
   ];
 
   if (!tenantId) return <NoTenantNotice />;
 
-  return (
-    <div className="rounded-xl border border-border bg-card shadow-sm">
-      {/* Card header */}
-      <div className="flex flex-wrap items-start justify-between gap-3 px-5 pb-4 pt-5">
-        <div className="min-w-0">
-          <h1 className="text-lg font-semibold text-foreground">Orders</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Manage all orders of the Restaurant
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {newOrderCount > 0 ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setTab("pending");
-                setNewOrderCount(0);
-              }}
-              className="h-9 rounded-md border-warning/30 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
-            >
-              {newOrderCount} new
-            </Button>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-9 text-muted-foreground hover:text-foreground"
-            onClick={() => void load()}
-            aria-label="Refresh orders"
-          >
-            <RefreshCw className="size-4" aria-hidden="true" />
-          </Button>
-          <Button
-            variant="outline"
-            className="h-9 border-border text-sm font-medium text-foreground"
-            onClick={() => exportCsv(exportTarget)}
-          >
-            <Download data-icon="inline-start" />
-            Export CSV
-          </Button>
-        </div>
-      </div>
+  const renderSortButton = (key: SortKey, label: string) => {
+    const active = sort.key === key;
+    const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(key)}
+        className={cn(
+          "inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs font-medium transition-colors hover:text-foreground",
+          active ? "text-primary" : "text-foreground/80"
+        )}
+        aria-label={`Sort by ${label}`}
+      >
+        {label}
+        <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+      </button>
+    );
+  };
 
-      {/* KPI band: five metrics split by hairline dividers */}
-      <div className="grid grid-cols-1 gap-px border-y border-border bg-border sm:grid-cols-3 xl:grid-cols-5">
+  return (
+    <div className="space-y-4">
+      {/* KPI band: its own card above the orders list */}
+      <section
+        aria-label="Order summary"
+        className="grid grid-cols-1 gap-px rounded-xl border border-border bg-border shadow-sm sm:grid-cols-3 xl:grid-cols-5"
+      >
         {loading
           ? Array.from({ length: 5 }).map((_, index) => (
               <div key={index} className="bg-card px-5 py-4">
@@ -398,264 +442,334 @@ function OrdersPage() {
                 )}
               </div>
             ))}
-      </div>
+      </section>
 
-      {/* Tabs + tools */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-4">
-        {!loading ? (
-          <nav aria-label="Filter orders by stage" className="-mx-1 flex flex-1 gap-1 overflow-x-auto px-1 min-w-0">
-            {TABS.map((tabDef) => {
-              const active = tab === tabDef.id;
-              return (
-                <button
-                  key={tabDef.id}
-                  type="button"
-                  onClick={() => {
-                    setTab(tabDef.id);
-                    setPage(1);
-                  }}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "shrink-0 rounded-full px-4 py-2 text-sm transition-colors",
-                    active
-                      ? "bg-primary font-medium text-primary-foreground"
-                      : "bg-secondary/60 text-muted-foreground hover:bg-accent hover:text-foreground"
-                  )}
-                >
-                  {tabDef.label}
-                </button>
-              );
-            })}
-          </nav>
-        ) : (
-          <Skeleton className="h-10 w-72" />
-        )}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <div className="relative">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
+      <section
+        aria-label="Orders list"
+        className="rounded-xl border border-border bg-card shadow-sm"
+      >
+        {/* Card header */}
+        <div className="flex flex-wrap items-start justify-between gap-3 px-5 pb-4 pt-5">
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold text-foreground">Orders</h1>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Manage all orders of the Restaurant
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {newOrderCount > 0 ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setTab("pending");
+                  setNewOrderCount(0);
+                }}
+                className="h-9 rounded-md border-warning/30 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
+              >
+                {newOrderCount} new
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-9 text-muted-foreground hover:text-foreground"
+              onClick={() => void load()}
+              aria-label="Refresh orders"
+            >
+              <RefreshCw className="size-4" aria-hidden="true" />
+            </Button>
+            <Button
+              variant="outline"
+              className="h-9 border-border text-sm font-medium text-foreground"
+              onClick={() => exportCsv(exportTarget)}
+            >
+              <Download data-icon="inline-start" />
+              Export CSV
+            </Button>
+          </div>
+        </div>
+
+        {/* Tabs + tools */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-4">
+          {!loading ? (
+            <nav
+              aria-label="Filter orders by stage"
+              className="-mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1"
+            >
+              {TABS.map((tabDef) => {
+                const active = tab === tabDef.id;
+                return (
+                  <button
+                    key={tabDef.id}
+                    type="button"
+                    onClick={() => {
+                      setTab(tabDef.id);
+                      setPage(1);
+                    }}
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "shrink-0 rounded-full px-4 py-2 text-sm transition-colors",
+                      active
+                        ? "bg-primary font-medium text-primary-foreground"
+                        : "bg-secondary/60 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    )}
+                  >
+                    {tabDef.label}
+                  </button>
+                );
+              })}
+            </nav>
+          ) : (
+            <Skeleton className="h-10 w-72" />
+          )}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search"
+                aria-label="Search orders"
+                className="h-10 w-44 rounded-full border-border bg-secondary/50 pl-9 sm:w-56"
+              />
+            </div>
+            <Select
+              value={paymentFilter}
+              onValueChange={(value) => {
+                setPaymentFilter(value);
                 setPage(1);
               }}
-              placeholder="Search"
-              aria-label="Search orders"
-              className="h-10 w-44 rounded-full border-border bg-secondary/50 pl-9 sm:w-56"
-            />
+            >
+              <SelectTrigger className="h-10 w-36 rounded-full border-border bg-secondary/50 pl-3 text-muted-foreground">
+                <SlidersHorizontal className="mr-1 size-4 shrink-0" aria-hidden="true" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All payments</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="unpaid">On hold</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <Select
-            value={paymentFilter}
-            onValueChange={(value) => {
-              setPaymentFilter(value);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="h-10 w-36 rounded-full border-border bg-secondary/50 pl-3 text-muted-foreground">
-              <SlidersHorizontal className="mr-1 size-4 shrink-0" aria-hidden="true" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All payments</SelectItem>
-              <SelectItem value="paid">Paid</SelectItem>
-              <SelectItem value="unpaid">On hold</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
-      </div>
 
-      {actionError ? (
-        <div className="px-5 pt-4">
-          <Alert variant="destructive">
-            <AlertTitle>Could not update the order</AlertTitle>
-            <AlertDescription>{actionError}</AlertDescription>
-          </Alert>
-        </div>
-      ) : null}
-      {loadError ? (
-        <div className="px-5 pt-4">
-          <Alert variant="destructive">
-            <AlertTitle>Could not load orders</AlertTitle>
-            <AlertDescription>{loadError}</AlertDescription>
-          </Alert>
-        </div>
-      ) : null}
+        {actionError ? (
+          <div className="px-5 pt-4">
+            <Alert variant="destructive">
+              <AlertTitle>Could not update the order</AlertTitle>
+              <AlertDescription>{actionError}</AlertDescription>
+            </Alert>
+          </div>
+        ) : null}
+        {loadError ? (
+          <div className="px-5 pt-4">
+            <Alert variant="destructive">
+              <AlertTitle>Could not load orders</AlertTitle>
+              <AlertDescription>{loadError}</AlertDescription>
+            </Alert>
+          </div>
+        ) : null}
 
-      {/* Table */}
-      <Table aria-label="Orders">
-        <TableHeader>
-          <TableRow className="bg-primary/[0.06] hover:bg-primary/[0.06] border-b border-border">
-            <TableHead className="w-12 pl-5 pr-2">
-              <Checkbox
-                checked={allPageSelected}
-                onCheckedChange={togglePage}
-                aria-label="Select all orders on this page"
-              />
-            </TableHead>
-            <TableHead className="px-2 text-xs font-medium text-foreground/80">Order ID</TableHead>
-            <TableHead className="px-2 text-xs font-medium text-foreground/80">Items Name</TableHead>
-            <TableHead className="px-2 text-xs font-medium text-foreground/80">Amount</TableHead>
-            <TableHead className="px-2 text-xs font-medium text-foreground/80">Status</TableHead>
-            <TableHead className="px-2 text-xs font-medium text-foreground/80">Date &amp; Time</TableHead>
-            <TableHead className="px-2 text-xs font-medium text-foreground/80">Payment Status</TableHead>
-            <TableHead className="pr-5 text-right text-xs font-medium text-foreground/80">
-              <span className="sr-only">Actions</span>
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {loading ? (
-            Array.from({ length: 6 }).map((_, index) => (
-              <TableRow key={index}>
-                <TableCell className="pl-5 pr-2">
-                  <Skeleton className="size-4" />
-                </TableCell>
-                <TableCell className="px-2">
-                  <Skeleton className="h-4 w-16" />
-                </TableCell>
-                <TableCell className="px-2">
-                  <Skeleton className="h-4 w-24" />
-                </TableCell>
-                <TableCell className="px-2">
-                  <Skeleton className="h-4 w-20" />
-                </TableCell>
-                <TableCell className="px-2">
-                  <Skeleton className="h-6 w-20 rounded-full" />
-                </TableCell>
-                <TableCell className="px-2">
-                  <Skeleton className="h-4 w-32" />
-                </TableCell>
-                <TableCell className="px-2">
-                  <Skeleton className="h-6 w-16 rounded-full" />
-                </TableCell>
-                <TableCell className="pr-5">
-                  <Skeleton className="ml-auto size-8" />
+        {/* Table */}
+        <Table className="table-fixed" aria-label="Orders">
+          <TableHeader>
+            <TableRow className="bg-primary/[0.06] hover:bg-primary/[0.06] border-b border-border">
+              <TableHead className="w-10 pl-5 pr-0">
+                <Checkbox
+                  checked={allPageSelected}
+                  onCheckedChange={togglePage}
+                  aria-label="Select all orders on this page"
+                />
+              </TableHead>
+              <TableHead className="px-2">
+                <span className="text-xs font-medium text-foreground/80">Order ID</span>
+              </TableHead>
+              <TableHead className="px-2">
+                <span className="text-xs font-medium text-foreground/80">Items Name</span>
+              </TableHead>
+              <TableHead className="px-2">
+                {renderSortButton("amount", "Amount")}
+              </TableHead>
+              <TableHead className="px-2">
+                <span className="text-xs font-medium text-foreground/80">Status</span>
+              </TableHead>
+              <TableHead className="px-2">
+                {renderSortButton("date", "Date & Time")}
+              </TableHead>
+              <TableHead className="px-2">
+                <span className="text-xs font-medium text-foreground/80">Payment Status</span>
+              </TableHead>
+              <TableHead className="pr-5 text-right">
+                <span className="text-xs font-medium text-foreground/80">Actions</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              Array.from({ length: 6 }).map((_, index) => (
+                <TableRow key={index}>
+                  <TableCell className="pl-5 pr-0">
+                    <Skeleton className="size-4" />
+                  </TableCell>
+                  <TableCell className="px-2">
+                    <Skeleton className="h-4 w-20" />
+                  </TableCell>
+                  <TableCell className="px-2">
+                    <Skeleton className="h-4 w-32" />
+                  </TableCell>
+                  <TableCell className="px-2">
+                    <Skeleton className="h-4 w-20" />
+                  </TableCell>
+                  <TableCell className="px-2">
+                    <Skeleton className="h-6 w-20 rounded-full" />
+                  </TableCell>
+                  <TableCell className="px-2">
+                    <Skeleton className="h-3 w-24" />
+                  </TableCell>
+                  <TableCell className="px-2">
+                    <Skeleton className="h-6 w-16 rounded-full" />
+                  </TableCell>
+                  <TableCell className="pr-5">
+                    <div className="ml-auto flex gap-1">
+                      <Skeleton className="size-8" />
+                      <Skeleton className="size-8" />
+                      <Skeleton className="size-8" />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : pageItems.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8}>
+                  <Empty className="rounded-lg py-14">
+                    <EmptyMedia>
+                      <ClipboardList className="size-5" aria-hidden="true" />
+                    </EmptyMedia>
+                    <EmptyHeader>
+                      <EmptyTitle>No orders here</EmptyTitle>
+                      <EmptyDescription>
+                        {tab === "all"
+                          ? "Share your store link so customers can order."
+                          : `No orders match the ${
+                              TABS.find((item) => item.id === tab)?.label ?? tab
+                            } stage. Try another tab or clear the search.`}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
                 </TableCell>
               </TableRow>
-            ))
-          ) : pageItems.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={8}>
-                <Empty className="rounded-lg py-14">
-                  <EmptyMedia>
-                    <ClipboardList className="size-5" aria-hidden="true" />
-                  </EmptyMedia>
-                  <EmptyHeader>
-                    <EmptyTitle>No orders here</EmptyTitle>
-                    <EmptyDescription>
-                      {tab === "all"
-                        ? "Share your store link so customers can order."
-                        : `No orders match the ${TABS.find((item) => item.id === tab)?.label ?? tab} stage. Try another tab or clear the search.`}
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              </TableCell>
-            </TableRow>
-          ) : (
-            pageItems.map((order) => (
-              <OrderTableRow
-                key={order.orderId}
-                order={order}
-                selected={selected.has(order.orderId)}
-                onToggle={toggleRow}
-                onPatch={patchOrder}
-                onPrint={printTicket}
-              />
-            ))
-          )}
-        </TableBody>
-      </Table>
-
-      {/* Footer: page position, numbered pages, rows per page */}
-      <div className="flex flex-col items-center justify-between gap-3 border-t border-border px-5 py-4 sm:flex-row">
-        {loading ? (
-          <Skeleton className="h-4 w-32" />
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            Page {safePage} of {totalPages}
-            {selected.size > 0 ? (
-              <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
-                {selected.size} selected
-              </span>
-            ) : null}
-          </p>
-        )}
-        {!loading && totalPages > 1 ? (
-          <nav aria-label="Pagination" className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-8"
-              onClick={() => setPage(safePage - 1)}
-              disabled={safePage <= 1}
-              aria-label="Previous page"
-            >
-              <ChevronLeft className="size-4" aria-hidden="true" />
-            </Button>
-            {pageList(totalPages, safePage).map((item, index) =>
-              item === "…" ? (
-                <span
-                  key={`gap-${index}`}
-                  className="flex size-8 items-center justify-center text-xs text-muted-foreground"
-                  aria-hidden="true"
-                >
-                  …
-                </span>
-              ) : (
-                <Button
-                  key={item}
-                  variant={item === safePage ? "default" : "outline"}
-                  size="icon"
-                  className={cn(
-                    "size-8 tabular-nums",
-                    item === safePage
-                      ? "bg-foreground text-background hover:bg-foreground/90"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                  onClick={() => setPage(item)}
-                  aria-label={`Page ${item}`}
-                  aria-current={item === safePage ? "page" : undefined}
-                >
-                  {item}
-                </Button>
-              )
+            ) : (
+              pageItems.map((order) => (
+                <OrderTableRow
+                  key={order.orderId}
+                  order={order}
+                  selected={selected.has(order.orderId)}
+                  onToggle={toggleRow}
+                  onPatch={patchOrder}
+                  onPrint={printTicket}
+                />
+              ))
             )}
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-8"
-              onClick={() => setPage(safePage + 1)}
-              disabled={safePage >= totalPages}
-              aria-label="Next page"
+          </TableBody>
+        </Table>
+
+        {/* Footer: page position, numbered pages, rows per page */}
+        <div className="flex flex-col items-center justify-between gap-3 border-t border-border px-5 py-4 sm:flex-row">
+          {loading ? (
+            <Skeleton className="h-4 w-32" />
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Page {safePage} of {totalPages}
+              {selected.size > 0 ? (
+                <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
+                  {selected.size} selected
+                </span>
+              ) : null}
+            </p>
+          )}
+          {!loading && totalPages > 1 ? (
+            <nav aria-label="Pagination" className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={() => setPage(safePage - 1)}
+                disabled={safePage <= 1}
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="size-4" aria-hidden="true" />
+              </Button>
+              {pageList(totalPages, safePage).map((item, index) =>
+                item === "…" ? (
+                  <span
+                    key={`gap-${index}`}
+                    className="flex size-8 items-center justify-center text-xs text-muted-foreground"
+                    aria-hidden="true"
+                  >
+                    …
+                  </span>
+                ) : (
+                  <Button
+                    key={item}
+                    variant={item === safePage ? "default" : "outline"}
+                    size="icon"
+                    className={cn(
+                      "size-8 tabular-nums",
+                      item === safePage
+                        ? "bg-foreground text-background hover:bg-foreground/90"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    onClick={() => setPage(item)}
+                    aria-label={`Page ${item}`}
+                    aria-current={item === safePage ? "page" : undefined}
+                  >
+                    {item}
+                  </Button>
+                )
+              )}
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={() => setPage(safePage + 1)}
+                disabled={safePage >= totalPages}
+                aria-label="Next page"
+              >
+                <ChevronRight className="size-4" aria-hidden="true" />
+              </Button>
+            </nav>
+          ) : null}
+          {loading ? (
+            <Skeleton className="h-9 w-40" />
+          ) : (
+            <Select
+              value={String(pageSize)}
+              onValueChange={(value) => {
+                setPageSize(Number(value));
+                setPage(1);
+              }}
             >
-              <ChevronRight className="size-4" aria-hidden="true" />
-            </Button>
-          </nav>
-        ) : null}
-        <div className="flex items-center gap-2">
-          <Select
-            value={String(pageSize)}
-            onValueChange={(value) => {
-              setPageSize(Number(value));
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="h-9 w-40 rounded-md border-border text-xs text-muted-foreground">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PAGE_SIZES.map((size) => (
-                <SelectItem key={size} value={String(size)}>
-                  {size} data per row
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              <SelectTrigger className="h-9 w-40 rounded-md border-border text-xs text-muted-foreground">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZES.map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size} data per row
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
