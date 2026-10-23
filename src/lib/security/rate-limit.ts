@@ -4,8 +4,9 @@ import { getAdminDb } from "@/lib/firebase/admin";
  * Shared rate limiting.
  *
  * The in-memory limiter resets on every cold start and is not shared between
- * serverless instances, so public endpoints use this Firestore-backed counter
- * as the source of truth. The in-memory limiter stays as a fast pre-filter.
+ * serverless instances, so public endpoints use this Postgres-backed counter
+ * (via the take_rate_limit rpc) as the source of truth. The in-memory
+ * limiter stays as a fast pre-filter.
  */
 
 const WINDOW_MS = 60_000;
@@ -38,30 +39,14 @@ export async function consumeSharedLimit(
 ): Promise<RateLimitResult> {
   const key = `${bucket}:${windowId(now)}`;
   const docId = key.replace(/[^A-Za-z0-9_:-]/g, "_");
-  const ref = getAdminDb().collection("rateLimits").doc(docId);
 
   try {
-    const result = await getAdminDb().runTransaction(async (tx) => {
-      const snap = await tx.get(ref);
-      const data = snap.exists
-        ? (snap.data() as CounterDocument)
-        : { count: 0, windowStart: now, expiresAt: new Date(now + 5 * WINDOW_MS) };
-      const next = (data.count ?? 0) + 1;
-      tx.set(
-        ref,
-        {
-          count: next,
-          windowStart: data.windowStart ?? now,
-          expiresAt: new Date(now + 5 * WINDOW_MS),
-        },
-        { merge: true }
-      );
-      return next;
-    });
-
+    // Atomic fixed-window increment performed by the take_rate_limit rpc
+    // (row lock means concurrent requests serialize correctly).
+    const incremented = await takeRateLimit(docId, limit);
     return {
-      allowed: result <= limit,
-      remaining: Math.max(0, limit - result),
+      allowed: incremented.allowed,
+      remaining: Math.max(0, limit - incremented.count),
       limit,
       scope: "shared",
     };
@@ -71,6 +56,38 @@ export async function consumeSharedLimit(
     // customers.
     return { allowed: true, remaining: limit, limit, scope: "memory" };
   }
+}
+
+/** Atomic increment window guard. Returns {allowed, count} or throws. */
+async function takeRateLimit(
+  docId: string,
+  limit: number
+): Promise<{ allowed: boolean; count: number }> {
+  const response = await fetch(
+    `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/rpc/take_rate_limit`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        p_key: docId,
+        p_limit: limit,
+        p_window_ms: WINDOW_MS,
+      }),
+      cache: "no-store",
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`take_rate_limit failed: ${response.status}`);
+  }
+  const payload = (await response.json()) as {
+    allowed: boolean;
+    remaining: number;
+  };
+  return { allowed: payload.allowed, count: limit - payload.remaining };
 }
 
 /** Combines the fast in-memory filter with the shared counter. */

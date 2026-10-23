@@ -1,4 +1,4 @@
-import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
+import { getAdminAuth, getAdminDb, type DocRef } from "@/lib/firebase/admin";
 import { createApiResponse, createApiError, handleApiError } from "@/lib/api/response";
 import { NextRequest } from "next/server";
 
@@ -12,14 +12,45 @@ export async function POST(request: NextRequest): Promise<Response> {
       return createApiError("Missing required fields", 400);
     }
 
-    const userRecord = await getAdminAuth().createUser({
-      email,
-      password,
-      displayName: businessName,
-    });
+    // Create the auth account; if the email is already registered (e.g. a
+    // previous signup attempt failed halfway) continue with that account
+    // instead of failing — the workspace rows below are idempotent.
+    let uid: string;
+    let resolvedEmail: string;
+    try {
+      const created = await getAdminAuth().createUser({
+        email,
+        password,
+        displayName: businessName,
+      });
+      uid = created.uid;
+      resolvedEmail = created.email ?? email;
+    } catch (createError: unknown) {
+      const message = createError instanceof Error ? createError.message : "";
+      if (!/already|registered|exists/i.test(message)) throw createError;
+      const existing = await getAdminAuth().getUserByEmail(email);
+      if (!existing) throw createError;
+      uid = existing.uid;
+      resolvedEmail = existing.email ?? email;
+    }
 
     const adminDb = getAdminDb();
-    const tenantRef = adminDb.collection("tenants").doc();
+    const userDoc = adminDb.collection("users").doc(uid);
+    const existingUser = await userDoc.get();
+    const existingTenantId =
+      (existingUser.exists
+        ? (existingUser.data() as { tenantId?: string } | undefined)?.tenantId
+        : undefined) ?? null;
+
+    if (existingTenantId) {
+      // Already provisioned — just report success so the client can sign in.
+      return createApiResponse(
+        { uid, tenantId: existingTenantId, role: "owner" },
+        200
+      );
+    }
+
+    const tenantRef = adminDb.collection("tenants").doc() as DocRef;
     const tenantId = tenantRef.id;
 
     await tenantRef.set({
@@ -27,7 +58,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       businessName,
       businessType: [businessType || "restaurant"],
       status: "active",
-      ownerUserId: userRecord.uid,
+      ownerUserId: uid,
       country: "PK",
       timezone: "Asia/Karachi",
       currency: "PKR",
@@ -38,11 +69,11 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     await adminDb
       .collection(`tenants/${tenantId}/members`)
-      .doc(userRecord.uid)
+      .doc(uid)
       .set({
-        membershipId: userRecord.uid,
+        membershipId: uid,
         tenantId,
-        userId: userRecord.uid,
+        userId: uid,
         role: "owner",
         status: "active",
         invitedBy: null,
@@ -50,9 +81,9 @@ export async function POST(request: NextRequest): Promise<Response> {
         updatedAt: new Date(),
       });
 
-    await adminDb.collection("users").doc(userRecord.uid).set({
-      userId: userRecord.uid,
-      email: userRecord.email,
+    await adminDb.collection("users").doc(uid).set({
+      userId: uid,
+      email: resolvedEmail,
       displayName: businessName,
       photoURL: null,
       tenantId,
@@ -61,14 +92,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       updatedAt: new Date(),
     });
 
-    return createApiResponse(
-      {
-        uid: userRecord.uid,
-        tenantId,
-        role: "owner",
-      },
-      201
-    );
+    return createApiResponse({ uid, tenantId, role: "owner" }, 201);
   } catch (error: unknown) {
     return handleApiError("api/auth/signup", error);
   }

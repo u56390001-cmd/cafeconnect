@@ -1,4 +1,4 @@
-import { getAdminDb } from "@/lib/firebase/admin";
+import { findMenuItemByAsset } from "@/lib/db/firestore-compat";
 import { downloadObject, listObjects } from "@/lib/media/storage";
 import { NextRequest } from "next/server";
 
@@ -25,18 +25,11 @@ export async function GET(
       return new Response("Not found", { status: 404 });
     }
 
-    const db = getAdminDb();
-    const snap = await db
-      .collectionGroup("menuItems")
-      .where("imageReferences.assetId", "==", assetId)
-      .limit(1)
-      .get();
-
-    if (snap.empty) {
+    const hit = await findMenuItemByAsset(assetId);
+    if (!hit) {
       return new Response("Not found", { status: 404 });
     }
-
-    const item = snap.docs[0].data();
+    const item = { itemId: hit.itemId, tenantId: hit.tenantId };
 
     const prefix = `tenants/${item.tenantId}/menu-items/${item.itemId}/`;
     const names = await listObjects(prefix).catch(() => [] as string[]);

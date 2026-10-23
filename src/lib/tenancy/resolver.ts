@@ -1,9 +1,9 @@
 import { getAdminDb } from "@/lib/firebase/admin";
-import {
-  CollectionReference,
-  DocumentReference,
+import type {
+  CollectionImpl as CollectionReference,
   Query,
-} from "firebase-admin/firestore";
+  DocRef as DocumentReference,
+} from "@/lib/db/firestore-compat";
 
 export interface TenantContext {
   tenantId: string;
@@ -97,9 +97,9 @@ export async function requireTenantScope(
   return { tenantId, userId, role };
 }
 
-export function scopedQuery<T>(
-  baseQuery: Query<T>,
+export function scopedQuery(
+  baseQuery: Query,
   tenantId: string
-): Query<T> {
+) {
   return baseQuery.where("tenantId", "==", tenantId);
 }

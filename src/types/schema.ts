@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase/firestore";
+import { Timestamp } from "@/lib/db/firestore-compat";
 
 export type TenantStatus = "active" | "suspended" | "pendingDeletion";
 

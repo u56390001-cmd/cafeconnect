@@ -13,7 +13,12 @@ export async function GET(request: NextRequest): Promise<Response> {
       return createApiError("Unauthorized", 401);
     }
 
-    const userRecord = await getAdminAuth().getUser(session.uid);
+    const userRecord = (await getAdminAuth().getUser(session.uid)) ?? {
+      uid: session.uid,
+      email: null,
+      displayName: null,
+      photoURL: null,
+    };
 
     const { tenantId, role } = await resolveTenantForSession(session.uid);
 

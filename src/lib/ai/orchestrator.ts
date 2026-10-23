@@ -1,5 +1,5 @@
 ﻿import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "@/lib/firebase/admin";
 import { randomUUID } from "crypto";
 import { getTenantApiKey } from "@/lib/settings/keys";
 import { loadTenantAiContext, type TenantAiContext } from "./context-builder";

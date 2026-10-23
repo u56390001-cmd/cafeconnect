@@ -1,6 +1,6 @@
 ﻿import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
 import { optionGroupsOf } from "@/lib/domain/options";
-import { Timestamp } from "firebase-admin/firestore";
+import { Timestamp } from "@/lib/firebase/admin";
 
 export interface MenuContext {
   categories: Array<{

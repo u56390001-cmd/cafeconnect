@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { supabaseBrowser } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -18,8 +19,10 @@ export default function SignupPage() {
   const [businessType, setBusinessType] = useState("restaurant");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const router = useRouter();
   const { signIn, signInWithGoogle } = useAuth();
+  const enableGoogleSignIn = process.env.NEXT_PUBLIC_ENABLE_GOOGLE_OAUTH === "true";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +70,24 @@ export default function SignupPage() {
       setError(friendlyAuthErrorMessage(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setError("");
+    if (!email) {
+      setError("Enter your email above first, then click Forgot password.");
+      return;
+    }
+    try {
+      const { error: resetError } = await supabaseBrowser().auth.resetPasswordForEmail(
+        email,
+        { redirectTo: `${window.location.origin}/signup?mode=login&reset=1` }
+      );
+      if (resetError) throw resetError;
+      setResetSent(true);
+    } catch (err: unknown) {
+      setError(friendlyAuthErrorMessage(err));
     }
   };
 
@@ -142,22 +163,37 @@ export default function SignupPage() {
             </Button>
           </form>
 
-          <div className="my-6 flex items-center gap-3">
-            <hr className="h-px w-full bg-border" />
-            <span className="text-center text-xs uppercase text-muted-foreground">
-              Or continue with
-            </span>
-            <hr className="h-px w-full bg-border" />
-          </div>
+          {enableGoogleSignIn && (
+            <>
+              <div className="my-6 flex items-center gap-3">
+                <hr className="h-px w-full bg-border" />
+                <span className="text-center text-xs uppercase text-muted-foreground">
+                  Or continue with
+                </span>
+                <hr className="h-px w-full bg-border" />
+              </div>
 
-          <Button
-            onClick={handleGoogleSignIn}
-            disabled={loading}
-            variant="outline"
-            className="w-full"
-          >
-            Sign in with Google
-          </Button>
+              <Button
+                onClick={handleGoogleSignIn}
+                disabled={loading}
+                variant="outline"
+                className="w-full"
+              >
+                Sign in with Google
+              </Button>
+            </>
+          )}
+
+          {mode === "login" && (
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              disabled={loading || resetSent}
+              className="w-full text-center text-sm text-muted-foreground hover:text-primary"
+            >
+              {resetSent ? "Password reset email sent — check your inbox" : "Forgot password?"}
+            </button>
+          )}
 
           <p className="text-center text-sm text-muted-foreground">
             {mode === "signup"

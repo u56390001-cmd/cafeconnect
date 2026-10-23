@@ -9,20 +9,17 @@ import {
   ReactNode,
 } from "react";
 import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signInWithPopup,
-  signOut,
-  onAuthStateChanged,
-} from "firebase/auth";
-import { GoogleAuthProvider } from "firebase/auth";
-import { auth } from "@/lib/firebase/config";
+  type Session,
+  type AuthChangeEvent,
+} from "@supabase/supabase-js";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
 export async function authFetch(
   input: string,
   init?: RequestInit
 ): Promise<Response> {
-  const token = await auth.currentUser?.getIdToken();
+  // Supabase stores the session under the key `sb-<ref>-auth-token`.
+  const token = await getAccessToken();
   const headers = new Headers(init?.headers);
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
@@ -33,6 +30,12 @@ export async function authFetch(
   // FormData bodies must keep their browser-generated multipart boundary,
   // so only string bodies get the JSON content type.
   return fetch(input, { ...init, headers });
+}
+
+async function getAccessToken(): Promise<string | null> {
+  const supabase = supabaseBrowser();
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
 }
 
 export interface AuthUser {
@@ -61,26 +64,77 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const authUser: AuthUser = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName,
-          photoURL: firebaseUser.photoURL,
-          tenantId: null,
-          role: null,
-        };
-        setUser(authUser);
-        await fetchUserTenant(firebaseUser.uid, authUser);
+    const supabase = supabaseBrowser();
+
+    const loadSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      const supabaseUser = data.session?.user ?? null;
+      if (supabaseUser) {
+        await adoptUser(supabaseUser);
       } else {
         setUser(null);
       }
       setLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
+    loadSession();
+
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: Session | null) => {
+        if (session?.user) {
+          void adoptUser(session.user);
+        } else {
+          setUser(null);
+          setLoading(false);
+        }
+      }
+    );
+
+    return () => listener.subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  interface SessionUserLike {
+    id: string;
+    email?: string | null;
+    user_metadata?: Record<string, unknown> | null;
+  }
+
+  function shapeUser(
+    supabaseUser: SessionUserLike | null | undefined
+  ): AuthUser | null {
+    if (!supabaseUser) return null;
+    const meta = supabaseUser.user_metadata ?? {};
+    return {
+      uid: supabaseUser.id,
+      email: supabaseUser.email ?? null,
+      displayName:
+        (meta["display_name"] as string | undefined) ??
+        (meta["name"] as string | undefined) ??
+        null,
+      photoURL:
+        (meta["avatar_url"] as string | undefined) ??
+        (meta["picture"] as string | undefined) ??
+        null,
+      tenantId: null,
+      role: null,
+    };
+  }
+
+  const adoptUser = async (raw: SessionUserLike | null | undefined) => {
+    const shaped =
+      shapeUser(raw) ??
+      ({
+        uid: "",
+        email: null,
+        displayName: null,
+        photoURL: null,
+        tenantId: null,
+        role: null,
+      } as AuthUser);
+    setUser(shaped);
+    await fetchUserTenant(shaped.uid, shaped);
+  };
 
   const fetchUserTenant = async (uid: string, authUser: AuthUser) => {
     try {
@@ -98,27 +152,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signIn = useCallback(
-    async (email: string, password: string) => {
-      await signInWithEmailAndPassword(auth, email, password);
-    },
-    []
-  );
+  const signIn = useCallback(async (email: string, password: string) => {
+    const { error } = await supabaseBrowser().auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+  }, []);
 
-  const signUp = useCallback(
-    async (email: string, password: string) => {
-      await createUserWithEmailAndPassword(auth, email, password);
-    },
-    []
-  );
+  const signUp = useCallback(async (email: string, password: string) => {
+    const { error } = await supabaseBrowser().auth.signUp({
+      email,
+      password,
+    });
+    if (error) throw error;
+  }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    const { error } = await supabaseBrowser().auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/login?next=/dashboard`,
+      },
+    });
+    if (error) throw error;
   }, []);
 
   const signOutUser = useCallback(async () => {
-    await signOut(auth);
+    await supabaseBrowser().auth.signOut();
     setUser(null);
   }, []);
 

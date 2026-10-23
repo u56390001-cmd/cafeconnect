@@ -1,5 +1,9 @@
 import { tenantCollection, tenantDoc } from "@/lib/tenancy/resolver";
-import { getAdminDb } from "@/lib/firebase/admin";
+import {
+  getAdminDb,
+  reserveOrderNumberViaRpc,
+  insertIdempotent,
+} from "@/lib/firebase/admin";
 import { randomBytes } from "crypto";
 import { createHash } from "crypto";
 import { isFulfilmentType } from "@/lib/domain/order-status";
@@ -746,7 +750,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     computed.appliedOfferName ?? computed.freeDeliveryOfferName;
 
   const currency = input.currency ?? (await getCurrency(input.tenantId));
-  const orderNumber = await reserveOrderNumber(input.tenantId, currency);
+  const orderNumber = await reserveOrderNumberViaRpc(input.tenantId, currency);
 
   const orderDocument = {
     orderId: docId,
@@ -783,14 +787,13 @@ export async function createOrder(input: CreateOrderInput): Promise<{
   };
 
   // Atomic create-if-absent: two concurrent submits with the same
-  // idempotency key can only produce one logical order.
-  const db = getAdminDb();
-  const created = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(orderRef);
-    if (snap.exists) return false;
-    tx.set(orderRef, orderDocument);
-    return true;
-  });
+  // idempotency key can only produce one logical order (unique id +
+  // insert-or-ignore in Postgres).
+  const created = await insertIdempotent(
+    tenantCollection(input.tenantId, "orders"),
+    docId,
+    orderDocument
+  );
 
   if (!created) {
     // Another request won the race - return the canonical order.
@@ -841,38 +844,14 @@ export function hashPhone(phone: string): string {
 
 /**
  * Reserves a collision-free, human-readable order number.
- * A top-level index document is created inside a transaction so two
- * concurrent orders can never share a number.
+ * The Postgres rpc inserts an order_numbers row inside a single statement,
+ * so two concurrent orders can never share a number.
  */
 export async function reserveOrderNumber(
   tenantId: string,
   currency: string
 ): Promise<string> {
-  const db = getAdminDb();
-  const datePart = new Date().toISOString().slice(2, 10).replace(/-/g, "");
-
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const suffix = randomBytes(4).toString("hex").toUpperCase();
-    const candidate = `TC-${datePart}-${suffix}`;
-    const ref = db.collection("orderNumbers").doc(candidate);
-
-    const reserved = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref);
-      if (snap.exists) return false;
-      tx.set(ref, {
-        orderNumber: candidate,
-        tenantId,
-        currency,
-        createdAt: new Date(),
-      });
-      return true;
-    });
-
-    if (reserved) return candidate;
-  }
-
-  // Extremely unlikely fallback: a longer random suffix.
-  return `TC-${datePart}-${randomBytes(8).toString("hex").toUpperCase()}`;
+  return reserveOrderNumberViaRpc(tenantId, currency);
 }
 
 /**
